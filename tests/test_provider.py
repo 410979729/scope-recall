@@ -665,3 +665,210 @@ def test_legacy_tool_aliases_still_work(provider):
 
     stats = json.loads(provider.handle_tool_call("lancepro_stats", {}))
     assert stats["provider"] == "scope-recall"
+
+def test_store_skips_exact_duplicate_content_in_same_scope(provider):
+    first = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "Joy prefers concise direct replies.", "target": "user"})
+    )
+    second = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "  Joy prefers concise direct replies.  ", "target": "user"})
+    )
+
+    assert first["stored"] is True
+    assert second["stored"] is False
+    assert second["duplicate"] is True
+    assert second["id"] == first["id"]
+    stats = json.loads(provider.handle_tool_call("scope_recall_stats", {}))
+    assert stats["total_memories"] == 1
+
+
+def test_auto_capture_filters_system_maintenance_prompts(provider):
+    noisy_prompt = "Review the conversation above and update the skill library. Be ACTIVE — most sessions produce at least one skill update."
+    provider.sync_turn(noisy_prompt, "OK")
+    provider.flush(timeout=2.0)
+
+    stats = json.loads(provider.handle_tool_call("scope_recall_stats", {}))
+    assert stats["total_memories"] == 0
+
+
+def test_forget_tool_removes_matching_sqlite_and_vector_rows(provider):
+    payload = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "Temporary deploy note should be removed.", "target": "memory"})
+    )
+    assert payload["stored"] is True
+    provider.flush(timeout=5.0)
+
+    result = json.loads(provider.handle_tool_call("scope_recall_forget", {"query": "Temporary deploy note", "limit": 5}))
+    assert result["deleted"] == 1
+    assert payload["id"] in result["ids"]
+
+    provider.on_turn_start(1, "Temporary deploy note")
+    assert provider.prefetch("Temporary deploy note") == ""
+
+
+def test_update_tool_replaces_memory_and_old_fts_is_removed(provider):
+    payload = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "Production deploy uses uv run old.", "target": "memory"})
+    )
+    updated = json.loads(
+        provider.handle_tool_call(
+            "scope_recall_update",
+            {"id": payload["id"], "content": "Production deploy uses uv run new.", "target": "ops"},
+        )
+    )
+
+    assert updated["updated"] is True
+    assert updated["id"] == payload["id"]
+    old_results = json.loads(provider.handle_tool_call("scope_recall_search", {"query": "uv run old", "limit": 3}))
+    assert all("uv run old" not in item["content"].lower() for item in old_results["results"])
+    new_results = json.loads(provider.handle_tool_call("scope_recall_search", {"query": "uv run new", "limit": 3}))
+    assert new_results["results"][0]["content"] == "Production deploy uses uv run new."
+    assert new_results["results"][0]["target"] == "ops"
+
+
+def test_dedupe_tool_dry_run_and_apply_collapses_existing_duplicates(provider):
+    first = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "Duplicate note for cleanup.", "target": "memory"})
+    )
+    assert first["stored"] is True
+    # Simulate legacy duplicate row bypassing the new write-time dedupe guard.
+    with provider._lock:
+        provider._store_now(content="Duplicate note for cleanup.", source="legacy-import", target="memory", session_id="legacy", semantic_merge=False)
+
+    dry = json.loads(provider.handle_tool_call("scope_recall_dedupe", {"dry_run": True}))
+    assert dry["duplicate_groups"] == 1
+    assert dry["duplicates"] == 1
+
+    applied = json.loads(provider.handle_tool_call("scope_recall_dedupe", {"dry_run": False}))
+    assert applied["deleted"] == 1
+    stats = json.loads(provider.handle_tool_call("scope_recall_stats", {}))
+    assert stats["total_memories"] == 1
+
+
+def test_vector_search_error_degrades_to_lexical_and_marks_needs_repair(provider, monkeypatch):
+    payload = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "Lexical fallback remembers gateway restart command.", "target": "ops"})
+    )
+    assert payload["stored"] is True
+
+    def broken_search(*args, **kwargs):
+        raise RuntimeError("missing lance data file")
+
+    monkeypatch.setattr(provider._vector_store, "search", broken_search)
+    result = json.loads(provider.handle_tool_call("scope_recall_search", {"query": "gateway restart command", "limit": 3}))
+
+    assert result["count"] >= 1
+    assert "gateway restart command" in result["results"][0]["content"]
+    stats = json.loads(provider.handle_tool_call("scope_recall_stats", {}))
+    assert stats["vector"]["status"] == "needs_repair"
+
+
+def test_repair_tool_rebuilds_vector_companion(provider):
+    provider.handle_tool_call("scope_recall_store", {"content": "Repair command should rebuild vector index.", "target": "ops"})
+    provider.flush(timeout=5.0)
+    provider._vector_ready = False
+    provider._vector_status = "needs_repair"
+    provider._vector_message = "forced test damage"
+
+    payload = json.loads(provider.handle_tool_call("scope_recall_repair", {}))
+
+    assert payload["repaired"] is True
+    assert payload["vector"]["status"] == "ready"
+    assert payload["vector"]["row_count"] == 1
+
+def test_smart_extract_turn_creates_preference_and_fact_memories(provider):
+    provider.sync_turn(
+        "Joy prefers playful concise replies. The production deploy command is uv run app.",
+        "Understood.",
+    )
+    provider.flush(timeout=5.0)
+
+    payload = json.loads(provider.handle_tool_call("scope_recall_search", {"query": "Joy reply preference", "limit": 5}))
+    assert any(item["target"] == "user" and "playful concise replies" in item["content"] for item in payload["results"])
+
+    payload = json.loads(provider.handle_tool_call("scope_recall_search", {"query": "production deploy command", "limit": 5}))
+    assert any(item["target"] == "ops" and "uv run app" in item["content"] for item in payload["results"])
+
+
+def test_semantic_near_duplicate_store_merges_existing_memory(provider):
+    first = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "Joy prefers concise replies.", "target": "user"})
+    )
+    second = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "Joy likes brief responses.", "target": "user"})
+    )
+
+    assert first["stored"] is True
+    assert second["stored"] is False
+    assert second["merged"] is True
+    assert second["id"] == first["id"]
+
+    payload = json.loads(provider.handle_tool_call("scope_recall_search", {"query": "Joy response style", "limit": 5}))
+    assert payload["count"] == 1
+    assert "brief responses" in payload["results"][0]["content"]
+
+
+def test_semantic_merge_does_not_hide_conflicting_memory(provider):
+    first = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "Joy prefers concise replies.", "target": "user"})
+    )
+    second = json.loads(
+        provider.handle_tool_call("scope_recall_store", {"content": "Joy no longer prefers concise replies.", "target": "user"})
+    )
+
+    assert first["stored"] is True
+    assert second["stored"] is True
+    assert second.get("merged") is not True
+    stats = json.loads(provider.handle_tool_call("scope_recall_stats", {}))
+    assert stats["total_memories"] == 2
+
+
+def test_merge_tool_combines_memory_content_and_deletes_source(provider):
+    a = json.loads(provider.handle_tool_call("scope_recall_store", {"content": "Joy prefers concise replies.", "target": "user"}))
+    b = json.loads(provider.handle_tool_call("scope_recall_store", {"content": "Joy likes warm answers.", "target": "user"}))
+
+    result = json.loads(
+        provider.handle_tool_call(
+            "scope_recall_merge",
+            {"target_id": a["id"], "source_ids": [b["id"]], "content": "Joy prefers concise and warm replies.", "target": "user"},
+        )
+    )
+
+    assert result["merged"] is True
+    assert result["target_id"] == a["id"]
+    assert result["deleted"] == 1
+    payload = json.loads(provider.handle_tool_call("scope_recall_search", {"query": "warm replies", "limit": 5}))
+    assert payload["count"] == 1
+    assert payload["results"][0]["id"] == a["id"]
+    assert "concise and warm" in payload["results"][0]["content"]
+
+
+def test_export_tool_returns_jsonl_records(provider):
+    stored = json.loads(provider.handle_tool_call("scope_recall_store", {"content": "Exportable deploy memory uses uv run app.", "target": "ops"}))
+
+    payload = json.loads(provider.handle_tool_call("scope_recall_export", {"format": "jsonl"}))
+
+    assert payload["format"] == "jsonl"
+    assert payload["count"] >= 1
+    lines = [line for line in payload["data"].splitlines() if line.strip()]
+    assert lines
+    parsed = [json.loads(line) for line in lines]
+    assert any(row["id"] == stored["id"] and row["content"] == "Exportable deploy memory uses uv run app." for row in parsed)
+
+
+def test_governance_tool_reports_tiers_and_decay_candidates(provider):
+    old = json.loads(provider.handle_tool_call("scope_recall_store", {"content": "Old temporary note for decay review.", "target": "general"}))
+    durable = json.loads(provider.handle_tool_call("scope_recall_store", {"content": "Joy prefers concise replies.", "target": "user"}))
+    conn = provider._require_conn()
+    with provider._lock:
+        conn.execute("UPDATE memories SET updated_at = ? WHERE id = ?", ("2020-01-01T00:00:00+00:00", old["id"]))
+        conn.commit()
+
+    payload = json.loads(provider.handle_tool_call("scope_recall_govern", {"dry_run": True}))
+
+    assert payload["dry_run"] is True
+    assert payload["total"] == 2
+    assert payload["tiers"]["core"] >= 1
+    assert payload["tiers"]["archive"] >= 1
+    assert old["id"] in payload["decay_candidates"]
+    assert durable["id"] not in payload["decay_candidates"]

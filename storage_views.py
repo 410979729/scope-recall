@@ -7,7 +7,7 @@ from .gating import build_fts_query, compact_text, like_terms, query_tokens
 from .models import RecallItem
 from .scoring import lexical_score
 from .sql_store import curated_recall_item_id, iter_curated_entries
-
+from .vector_runtime import mark_vector_needs_repair
 
 
 def search_db_memories(provider: Any, query: str, *, limit: int) -> list[RecallItem]:
@@ -98,13 +98,16 @@ def search_db_memories(provider: Any, query: str, *, limit: int) -> list[RecallI
     return results
 
 
-
 def search_vector_memories(provider: Any, query: str, *, limit: int) -> list[RecallItem]:
     if not provider._vector_ready or not provider._vector_store or not provider._embedder:
         return []
-    query_vector = provider._embedder.embed(query)
-    top_k = max(limit, int((provider._vector_config or {}).get("top_k") or limit))
-    rows = provider._vector_store.search(query_vector, scope_id=provider._scope_id, limit=top_k)
+    try:
+        query_vector = provider._embedder.embed(query)
+        top_k = max(limit, int((provider._vector_config or {}).get("top_k") or limit))
+        rows = provider._vector_store.search(query_vector, scope_id=provider._scope_id, limit=top_k)
+    except Exception as exc:
+        mark_vector_needs_repair(provider, exc)
+        return []
     threshold = float((provider._retrieval_config or {}).get("vector_min_score") or 0.12)
     results: list[RecallItem] = []
     for row in rows:
@@ -125,7 +128,6 @@ def search_vector_memories(provider: Any, query: str, *, limit: int) -> list[Rec
             )
         )
     return results
-
 
 
 def search_curated_memories(provider: Any, query: str) -> list[RecallItem]:

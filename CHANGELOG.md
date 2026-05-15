@@ -2,6 +2,18 @@
 
 All notable changes to `scope-recall` will be documented in this file.
 
+## [1.0.0] - 2026-05-15
+
+### Added
+- Declared the first stable V1 release line with explicit provider identity, storage, tool, retrieval, migration, and runtime-freshness contracts in `docs/stability.md`.
+- Added V1-grade release checks for stable metadata, required documentation, wheel contents, and public-facing version consistency.
+- Added a public README structure with badges, quick start, architecture diagram, tool quick reference, troubleshooting notes, and release-gate guidance.
+
+### Changed
+- Promoted package and plugin metadata from `0.2.0` / beta classifier to `1.0.0` / production-stable classifier.
+- Tightened V1 documentation around SQLite truth ownership, LanceDB companion-cache rebuildability, and non-goals versus OpenClaw `memory-lancedb-pro` parity.
+- Changed GitHub Actions to run `scripts/check.release.py` as the remote CI gate so CI matches the local V1 release audit.
+
 ## [0.2.0] - 2026-05-12
 
 ### Added

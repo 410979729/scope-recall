@@ -214,6 +214,7 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
         self._api_keys = _resolve_api_keys(api_key, api_key_env or "OPENAI_API_KEY")
         self._base_url = _resolve_optional_value(base_url, base_url_env or "OPENAI_BASE_URL")
         self._client = None
+        self._active_key_index = 0
 
     def is_available(self) -> bool:
         return bool(OpenAI and self._api_keys)
@@ -228,19 +229,38 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
         if not self.is_available():
             raise RuntimeError(f"{self.provider} embedder is not configured")
         if self._client is None:
-            self._client = OpenAI(api_key=self._api_keys[0], base_url=self._base_url)
+            self._client = OpenAI(api_key=self._api_keys[self._active_key_index], base_url=self._base_url)
         return self._client
+
+    def _rotate_client_after_failure(self) -> bool:
+        if len(self._api_keys) <= 1:
+            return False
+        self._active_key_index = (self._active_key_index + 1) % len(self._api_keys)
+        self._client = None
+        return True
 
     def embed_texts(self, texts: Iterable[str]) -> list[list[float]]:
         items = [clean_text(text) or " " for text in texts]
         if not items:
             return []
-        client = self._client_or_raise()
         vectors: list[list[float]] = []
         batch_size = 100
         for start in range(0, len(items), batch_size):
             batch = items[start : start + batch_size]
-            response = client.embeddings.create(model=self.model, input=batch)
+            response = None
+            last_error: Exception | None = None
+            for _ in range(max(1, len(self._api_keys))):
+                client = self._client_or_raise()
+                try:
+                    response = client.embeddings.create(model=self.model, input=batch)
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if not self._rotate_client_after_failure():
+                        raise
+            if response is None:
+                assert last_error is not None
+                raise last_error
             vectors.extend(list(row.embedding) for row in response.data)
         if vectors:
             self.info.dimensions = len(vectors[0])

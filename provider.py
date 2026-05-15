@@ -9,20 +9,41 @@ from typing import Any, Dict, List, Optional
 
 from agent.memory_provider import MemoryProvider
 
-from .capture import enqueue_store, flush_writer, shutdown_writer, start_writer, store_now
+from .capture import enqueue_store, flush_writer, shutdown_writer, start_writer
 from .config import load_runtime_config, save_runtime_config
 from .embedders import BaseEmbedder
-from .gating import clean_text, compact_text, config_bool, dedup_key, normalize_query, should_skip_retrieval
+from .gating import clean_text, config_bool, dedup_key, normalize_query, should_skip_retrieval
+from .governance import extract_candidates
+from .memory_ops import (
+    dedupe_memories,
+    delete_memories,
+    export_memories,
+    find_semantic_merge_candidate,
+    govern_memories,
+    merge_memories,
+    repair_vector,
+    stats_payload,
+    store_memory_now,
+    update_memory,
+)
 from .migration import migrate_legacy_scope_recall_storage
-from .models import RecallItem, RuntimeScope
+from .models import RuntimeScope
 from .recall import RecallService
+from .prompting import render_current_turn_recall
 from .schemas import (
+    SCOPE_RECALL_DEDUPE_SCHEMA,
+    SCOPE_RECALL_EXPORT_SCHEMA,
+    SCOPE_RECALL_FORGET_SCHEMA,
+    SCOPE_RECALL_GOVERN_SCHEMA,
+    SCOPE_RECALL_MERGE_SCHEMA,
+    SCOPE_RECALL_REPAIR_SCHEMA,
     SCOPE_RECALL_SEARCH_SCHEMA,
     SCOPE_RECALL_STATS_SCHEMA,
     SCOPE_RECALL_STORE_SCHEMA,
+    SCOPE_RECALL_UPDATE_SCHEMA,
 )
 from .scope import build_scope_id
-from .sql_store import ensure_schema, iter_curated_entries
+from .sql_store import ensure_schema
 from .storage_views import search_curated_memories, search_db_memories, search_vector_memories
 from .tooling import ScopeRecallToolService
 from .vector_runtime import setup_vector_layer
@@ -164,72 +185,7 @@ class ScopeRecallMemoryProvider(MemoryProvider):
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         del session_id
-        if not config_bool(self._config, "auto_recall", True):
-            return ""
-        if self._scope.agent_context != "primary":
-            return ""
-
-        query = self._normalize_query(query, int(self._config_value("query_char_limit", 1000)))
-        if should_skip_retrieval(query, int(self._config_value("auto_recall_min_length", 15))):
-            return ""
-
-        results = self._recall_service.search_memories(query, limit=self._retrieve_limit())
-        if not results:
-            return ""
-
-        min_repeated = int(self._config_value("auto_recall_min_repeated", 8))
-        if min_repeated > 0:
-            filtered: list[RecallItem] = []
-            for item in results:
-                last_turn = self._last_recall_turns.get(item.id, 0)
-                if last_turn and (self._current_turn - last_turn) < min_repeated:
-                    continue
-                filtered.append(item)
-            results = filtered
-        if not results:
-            return ""
-
-        max_items = min(
-            int(self._config_value("auto_recall_max_items", 3)),
-            int(self._config_value("max_recall_per_turn", 10)),
-        )
-        max_chars = int(self._config_value("auto_recall_max_chars", 600))
-        per_item_chars = int(self._config_value("auto_recall_per_item_max_chars", 180))
-
-        selected: list[RecallItem] = []
-        used_chars = 0
-        for item in results:
-            if len(selected) >= max_items:
-                break
-            summary = compact_text(item.summary or item.content, per_item_chars)
-            if not summary:
-                continue
-            remaining = max_chars - used_chars
-            if remaining <= 0:
-                break
-            if len(summary) > remaining:
-                summary = compact_text(summary, remaining)
-            if not summary:
-                continue
-            selected.append(
-                RecallItem(
-                    id=item.id,
-                    content=item.content,
-                    summary=summary,
-                    source=item.source,
-                    target=item.target,
-                    score=item.score,
-                    updated_at=item.updated_at,
-                    metadata=item.metadata or {},
-                )
-            )
-            used_chars += len(summary)
-        if not selected:
-            return ""
-
-        self._mark_recalled([item.id for item in selected])
-        lines = [f"- [{item.target or item.source}] {item.summary}" for item in selected]
-        return "## Scope Recall Relevant Memories\n" + "\n".join(lines)
+        return render_current_turn_recall(self, query)
 
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
         del session_id
@@ -242,7 +198,21 @@ class ScopeRecallMemoryProvider(MemoryProvider):
         clean_assistant = self._clean_text(assistant_content)
         min_capture = int(self._config_value("min_capture_length", 10))
 
-        if len(clean_user) >= min_capture and not self._is_trivial(clean_user):
+        extracted = False
+        for candidate in extract_candidates(clean_user):
+            if len(candidate.content) < min_capture:
+                continue
+            enqueue_store(
+                self,
+                content=candidate.content,
+                source="turn-extracted",
+                target=candidate.target,
+                session_id=self._session_id,
+                metadata={"category": candidate.category, "confidence": candidate.confidence},
+            )
+            extracted = True
+
+        if len(clean_user) >= min_capture and not self._is_trivial(clean_user) and not extracted:
             enqueue_store(
                 self,
                 content=clean_user,
@@ -306,7 +276,18 @@ class ScopeRecallMemoryProvider(MemoryProvider):
             return []
         if self._scope.agent_context != "primary":
             return []
-        return [SCOPE_RECALL_STORE_SCHEMA, SCOPE_RECALL_SEARCH_SCHEMA, SCOPE_RECALL_STATS_SCHEMA]
+        return [
+            SCOPE_RECALL_STORE_SCHEMA,
+            SCOPE_RECALL_SEARCH_SCHEMA,
+            SCOPE_RECALL_FORGET_SCHEMA,
+            SCOPE_RECALL_UPDATE_SCHEMA,
+            SCOPE_RECALL_DEDUPE_SCHEMA,
+            SCOPE_RECALL_MERGE_SCHEMA,
+            SCOPE_RECALL_EXPORT_SCHEMA,
+            SCOPE_RECALL_GOVERN_SCHEMA,
+            SCOPE_RECALL_REPAIR_SCHEMA,
+            SCOPE_RECALL_STATS_SCHEMA,
+        ]
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         del kwargs
@@ -339,15 +320,43 @@ class ScopeRecallMemoryProvider(MemoryProvider):
         target: str,
         session_id: str,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        return store_now(
+        allow_duplicate: bool = False,
+        semantic_merge: bool = True,
+    ) -> tuple[str, bool, str]:
+        return store_memory_now(
             self,
             content=content,
             source=source,
             target=target,
             session_id=session_id,
             metadata=metadata,
+            allow_duplicate=allow_duplicate,
+            semantic_merge=semantic_merge,
         )
+
+    def _find_semantic_merge_candidate(self, content: str, target: str) -> tuple[str, str]:
+        return find_semantic_merge_candidate(self, content, target)
+
+    def _update_memory(self, memory_id: str, content: str, target: str | None = None) -> tuple[bool, str, str]:
+        return update_memory(self, memory_id, content, target)
+
+    def _merge_memories(self, target_id: str, source_ids: list[str], content: str | None = None, target: str | None = None) -> dict[str, Any]:
+        return merge_memories(self, target_id, source_ids, content, target)
+
+    def _export_memories(self, *, fmt: str = "jsonl", scope_only: bool = True) -> dict[str, Any]:
+        return export_memories(self, fmt=fmt, scope_only=scope_only)
+
+    def _govern_memories(self, *, dry_run: bool = True, scope_only: bool = True) -> dict[str, Any]:
+        return govern_memories(self, dry_run=dry_run, scope_only=scope_only)
+
+    def _delete_memories(self, ids: list[str]) -> int:
+        return delete_memories(self, ids)
+
+    def _dedupe_memories(self, *, dry_run: bool = True, scope_only: bool = False) -> dict[str, Any]:
+        return dedupe_memories(self, dry_run=dry_run, scope_only=scope_only)
+
+    def _repair_vector(self) -> dict[str, Any]:
+        return repair_vector(self)
 
     def _search_vector_memories(self, query: str, *, limit: int) -> List[RecallItem]:
         return search_vector_memories(self, query, limit=limit)
@@ -360,47 +369,7 @@ class ScopeRecallMemoryProvider(MemoryProvider):
             self._last_recall_turns[memory_id] = self._current_turn
 
     def _stats_payload(self) -> Dict[str, Any]:
-        conn = self._require_conn()
-        with self._lock:
-            total = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-            scoped = conn.execute("SELECT COUNT(*) FROM memories WHERE scope_id = ?", (self._scope_id,)).fetchone()[0]
-        vector_path = ""
-        vector_table = ""
-        vector_embedder: dict[str, Any] = {}
-        if self._vector_store is not None:
-            vector_path = str(self._vector_store.db_path)
-            vector_table = self._vector_store.table_name
-        if self._embedder is not None:
-            vector_embedder = self._embedder.describe()
-        return {
-            "provider": self.name,
-            "db_path": str(self._db_path) if self._db_path else "",
-            "scope_id": self._scope_id,
-            "total_memories": total,
-            "scope_memories": scoped,
-            "curated_memories": len(iter_curated_entries(self._hermes_home)),
-            "migration": dict(self._migration_info),
-            "vector": {
-                "enabled": self._vector_enabled,
-                "ready": self._vector_ready,
-                "status": self._vector_status,
-                "message": self._vector_message,
-                "backend": self._vector_backend,
-                "path": vector_path,
-                "table": vector_table,
-                "row_count": self._vector_row_count,
-                "unique_id_count": self._vector_unique_id_count,
-                "duplicate_row_count": self._vector_duplicate_row_count,
-                "sync_mode": str((self._vector_config or {}).get("sync_mode") or "incremental"),
-                "embedder": vector_embedder,
-                "fallback_embedder": dict(((self._vector_config or {}).get("fallback_embedder") or {})),
-            },
-            "retrieval": {
-                "mode": str((self._retrieval_config or {}).get("mode") or "lexical"),
-                "lexical_weight": float((self._retrieval_config or {}).get("lexical_weight") or 1.0),
-                "vector_weight": float((self._retrieval_config or {}).get("vector_weight") or 0.0),
-            },
-        }
+        return stats_payload(self)
 
     def _retrieve_limit(self) -> int:
         max_items = int(self._config_value("auto_recall_max_items", 3))

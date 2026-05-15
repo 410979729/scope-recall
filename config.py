@@ -17,6 +17,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "capture_assistant": True,
     "query_char_limit": 1000,
     "min_capture_length": 10,
+    "capture_hard_max_chars": 4000,
     "enable_tools": True,
     "retrieval": {
         "mode": "hybrid",

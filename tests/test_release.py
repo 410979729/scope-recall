@@ -285,7 +285,10 @@ def test_vector_upsert_failure_marks_needs_repair_without_losing_sqlite_row(tmp_
 
 
 
-def test_default_runtime_falls_back_to_local_hash_when_api_embedder_is_unavailable(tmp_path):
+def test_default_runtime_falls_back_to_local_hash_when_api_embedder_is_unavailable(tmp_path, monkeypatch):
+    for name in ("OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_BASE_URL", "OPENAI_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+
     plugin = load_memory_provider("scope-recall")
     assert plugin is not None
     plugin.initialize(
@@ -483,3 +486,116 @@ def test_openclaw_import_script_is_idempotent(tmp_path):
     assert memory_count == 1
     assert ledger_count == 1
     assert fts_count == 1
+
+
+def test_lexical_and_combined_scores_are_capped_at_one():
+    from scope_recall.scoring import combine_scores, lexical_score
+
+    lexical = lexical_score(
+        query="Joy prefers concise answers",
+        content="Joy prefers concise answers with direct problem-first reporting.",
+        summary="Joy prefers concise answers",
+        source="builtin-curated",
+        target="user",
+    )
+    assert 0.0 <= lexical <= 1.0
+
+    combined = combine_scores(
+        {"lexical_score": 1.3, "vector_score": 1.2},
+        lexical_weight=0.45,
+        vector_weight=0.55,
+    )
+    assert combined == 1.0
+
+
+def test_recall_merge_preserves_incoming_recency_metadata(tmp_path):
+    from scope_recall.models import RecallItem
+
+    plugin = load_memory_provider("scope-recall")
+    assert plugin is not None
+    plugin.initialize(
+        "session-recency-merge",
+        hermes_home=str(tmp_path),
+        platform="cli",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+    )
+    try:
+        plugin._retrieval_config = {"mode": "hybrid", "min_score": 0.0, "candidate_pool": 3}
+        duplicate_content = "Joy prefers concise answers with direct problem-first reporting."
+        older = RecallItem(
+            id="older",
+            source="tool",
+            target="user",
+            content=duplicate_content,
+            summary=duplicate_content,
+            updated_at="2026-01-01T00:00:00+00:00",
+            score=0.4,
+            metadata={"lexical_score": 0.4, "base_score": 0.4, "recency_bonus": 0.05},
+        )
+        newer = RecallItem(
+            id="newer",
+            source="tool",
+            target="user",
+            content=duplicate_content,
+            summary=duplicate_content,
+            updated_at="2026-01-02T00:00:00+00:00",
+            score=0.7,
+            metadata={"vector_score": 0.7, "base_score": 0.7, "recency_bonus": 0.25},
+        )
+
+        plugin._search_db_memories = lambda query, limit: [older]
+        plugin._search_vector_memories = lambda query, limit: [newer]
+        plugin._search_curated_memories = lambda query: []
+
+        results = plugin._recall_service.search_memories("Joy concise answers", limit=1)
+    finally:
+        plugin.shutdown()
+
+    assert len(results) == 1
+    assert results[0].id == "newer"
+    assert results[0].metadata["lexical_score"] == 0.4
+    assert results[0].metadata["vector_score"] == 0.7
+    assert results[0].metadata["base_score"] == pytest.approx(0.565)
+    assert results[0].metadata["recency_bonus"] == 0.25
+
+
+def test_openai_compatible_embedder_rotates_to_next_key_after_failure(monkeypatch):
+    from scope_recall.embedders import OpenAICompatibleEmbedder
+
+    attempts: list[str] = []
+
+    class _FakeEmbeddings:
+        def __init__(self, key: str) -> None:
+            self.key = key
+
+        def create(self, *, model: str, input: list[str]):
+            attempts.append(self.key)
+            if self.key == "public-test-key-1":
+                raise RuntimeError("simulated exhausted key")
+
+            class _Item:
+                embedding = [0.1, 0.2, 0.3]
+
+            class _Response:
+                data = [_Item() for _ in input]
+
+            return _Response()
+
+    class _FakeOpenAI:
+        def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+            self.embeddings = _FakeEmbeddings(api_key)
+
+    monkeypatch.setattr("scope_recall.embedders.OpenAI", _FakeOpenAI)
+    embedder = OpenAICompatibleEmbedder(
+        model="gemini-embedding-001",
+        api_key=["public-test-key-1", "public-test-key-2"],
+        base_url="https://example.invalid/v1",
+        dimensions=3,
+    )
+
+    vectors = embedder.embed_texts(["memory row"])
+
+    assert vectors == [[0.1, 0.2, 0.3]]
+    assert attempts == ["public-test-key-1", "public-test-key-2"]

@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 """Rebuild the scope-recall LanceDB companion from SQLite truth.
 
 This script is intentionally conservative:
@@ -11,6 +9,8 @@ This script is intentionally conservative:
 Run it after stopping/restarting Hermes if you need a clean companion index for
 release-grade storage hygiene or after changing embedder dimensions.
 """
+
+from __future__ import annotations
 
 import argparse
 import importlib.util
@@ -37,9 +37,9 @@ if PACKAGE_NAME not in sys.modules:
     sys.modules[PACKAGE_NAME] = package
     spec.loader.exec_module(package)
 
-from scope_recall_repair_runtime.config import load_runtime_config
-from scope_recall_repair_runtime.embedders import build_embedder
-from scope_recall_repair_runtime.vector_store import LanceVectorStore
+from scope_recall_repair_runtime.config import load_runtime_config  # noqa: E402
+from scope_recall_repair_runtime.embedders import build_embedder  # noqa: E402
+from scope_recall_repair_runtime.vector_store import LanceVectorStore  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

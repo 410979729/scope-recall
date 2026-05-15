@@ -1,13 +1,44 @@
 # scope-recall
 
+<div align="center">
+
+**Hermes current-turn memory provider with SQLite truth storage and a LanceDB vector companion**
+
+Current-turn recall · SQLite truth · LanceDB companion · Hybrid retrieval · Strong scope isolation · Deterministic governance
+
+[![CI](https://github.com/joyjoy-ai/scope-recall/actions/workflows/ci.yml/badge.svg)](https://github.com/joyjoy-ai/scope-recall/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Hermes Plugin](https://img.shields.io/badge/Hermes-Memory%20Provider-blue)](https://hermes-agent.nousresearch.com/docs)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](pyproject.toml)
+
+</div>
+
 `scope-recall` is a Hermes local memory provider built for **current-turn recall** with strong runtime scope isolation.
 
-It now uses a **two-layer design**:
+Version `1.0.0` is the first stable V1 release line. The V1 compatibility contract is documented in [`docs/stability.md`](docs/stability.md).
+
+It uses a **two-layer design**:
 
 - **SQLite truth store** for durable local records and deterministic auditing
 - **LanceDB vector companion** for semantic retrieval and hybrid ranking
 
 This replaces the old `lancepro` naming, which was misleading because the earlier implementation was SQLite-only.
+
+## Why this provider?
+
+Hermes already has curated durable memory files, and gateway deployments often run across multiple chats, groups, topics, users, and agent identities. A memory provider for that environment must avoid stale context bleed and must make storage ownership obvious.
+
+`scope-recall` focuses on that exact problem:
+
+| Concern | `scope-recall` V1 answer |
+| --- | --- |
+| Truth storage | SQLite is authoritative; LanceDB is rebuildable companion state |
+| Recall timing | `prefetch(query)` recalls for the current turn; `queue_prefetch()` is intentionally a no-op |
+| Scope isolation | agent workspace + identity + platform + user + chat/session + thread |
+| Offline bootstrap | local deterministic fallback embedder works without API keys |
+| Higher-quality retrieval | OpenAI-compatible Gemini embedding default when credentials exist |
+| Governance | deterministic dedupe, filtering, metadata classification, and decay review |
+| Migration | legacy local `lancepro` auto-migration; OpenClaw import is explicit |
 
 ## What it does
 
@@ -34,6 +65,65 @@ Important boundary:
 - a wheel build is useful for packaging/release verification, but it is **not** the primary install path for Hermes users yet
 - do not read wheel build success as proof that Hermes can install or discover the plugin directly from the wheel alone
 
+## Quick start
+
+```bash
+cd "$HERMES_HOME/plugins"
+git clone https://github.com/joyjoy-ai/scope-recall.git scope-recall
+cd scope-recall
+python -m pip install -e .
+```
+
+Then configure Hermes to use the provider name:
+
+```yaml
+memory:
+  provider: scope-recall
+```
+
+For a local smoke check after installation:
+
+```bash
+hermes memory status
+```
+
+## Configuration
+
+The shipped `config.json` defaults to hybrid retrieval with a hosted OpenAI-compatible Gemini embedding path and a deterministic offline fallback.
+
+Minimal default shape:
+
+```json
+{
+  "retrieval": {
+    "mode": "hybrid",
+    "lexical_weight": 0.45,
+    "vector_weight": 0.55
+  },
+  "vector": {
+    "enabled": true,
+    "backend": "lancedb",
+    "embedder": {
+      "provider": "openai-compatible",
+      "model": "gemini-embedding-001",
+      "dimensions": 3072,
+      "api_key_env": ["OPENAI_API_KEY", "GOOGLE_API_KEY"],
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"
+    },
+    "fallback_embedder": {
+      "provider": "local-hash",
+      "dimensions": 256,
+      "model": "hash-v1"
+    }
+  }
+}
+```
+
+Credential rule:
+
+- put real API keys in your private environment, not in `config.json`
+- if no configured key is available, `scope-recall` falls back to `local-hash`
+
 ## Storage layout
 
 Under the active Hermes profile:
@@ -45,6 +135,30 @@ Under the active Hermes profile:
 Legacy `lancepro` storage is migrated forward on first initialization when present.
 
 ## Architecture
+
+```text
+Hermes turn
+   |
+   | current query
+   v
+prefetch(query)
+   |
+   +--> live curated memory read
+   |       - $HERMES_HOME/memories/USER.md
+   |       - $HERMES_HOME/memories/MEMORY.md
+   |
+   +--> SQLite truth lookup / FTS
+   |       - provider-owned memory rows
+   |       - scope metadata
+   |       - timestamps and governance metadata
+   |
+   +--> LanceDB vector companion
+   |       - semantic candidate retrieval
+   |       - rebuildable from SQLite truth
+   |
+   v
+hybrid scoring + recency-aware ranking + bounded prompt block
+```
 
 ### 1. SQLite truth layer
 
@@ -103,6 +217,13 @@ SQLite is the cardinality authority. During vector sync, the provider compares S
 
 A healthy synced companion should have `total_memories == vector.unique_id_count == vector.row_count` and `vector.duplicate_row_count == 0` for provider-owned rows.
 
+For deeper maintenance:
+
+```bash
+python scripts/repair.vector_index.py --hermes-home "$HERMES_HOME" --dry-run
+python scripts/repair.vector_index.py --hermes-home "$HERMES_HOME"
+```
+
 ## Retrieval modes
 
 Configured in `config.json`:
@@ -156,9 +277,48 @@ Primary-agent only:
 
 - `scope_recall_store`
 - `scope_recall_search`
+- `scope_recall_forget`
+- `scope_recall_update`
+- `scope_recall_dedupe`
+- `scope_recall_merge`
+- `scope_recall_export`
+- `scope_recall_govern`
+- `scope_recall_repair`
 - `scope_recall_stats`
 
 Backward-compatible aliases are still accepted internally for old `lancepro_*` tool names during transition.
+
+### Tool quick reference
+
+| Tool | Purpose |
+| --- | --- |
+| `scope_recall_store` | Store a provider-owned memory row after deterministic governance checks |
+| `scope_recall_search` | Search scoped memory with lexical/vector/hybrid retrieval |
+| `scope_recall_forget` | Delete memories matching a query or explicit id scope |
+| `scope_recall_update` | Replace the content/category of an existing memory |
+| `scope_recall_dedupe` | Inspect or collapse exact duplicate rows |
+| `scope_recall_merge` | Merge multiple memories into a target row |
+| `scope_recall_export` | Export SQLite truth rows as JSON or JSONL |
+| `scope_recall_govern` | Review tier distribution and decay/archive candidates |
+| `scope_recall_repair` | Repair/rebuild the LanceDB companion from SQLite truth |
+| `scope_recall_stats` | Inspect storage, retrieval, scope, and vector health |
+
+## Write-time governance
+
+Provider-owned captures now apply a deterministic first line of governance before SQLite writes:
+
+- exact normalized-content dedupe within `(scope_id, target)`
+- conservative semantic near-duplicate merge for `user`, `ops`, and `project` memories
+- conflict preservation when a near-duplicate contains negation / supersession language
+- rules-based smart extraction from user turns into preference / ops / project fact candidates
+- metadata classification for category, tier, confidence, sensitivity, and expiry review
+- noisy maintenance/system prompt filtering
+- trivial reply filtering
+- obvious secret-bearing text filtering
+- overlong prompt-block filtering through `capture_hard_max_chars`
+- governance review through `scope_recall_govern`, including core/working/archive tier counts and decay candidates
+
+This is a local deterministic governance layer, not a remote LLM extraction pipeline. It intentionally stays conservative so SQLite remains auditable truth and conflicting memories are preserved rather than silently overwritten.
 
 ## Embedders
 
@@ -191,12 +351,43 @@ OpenClaw `memory-lancedb-pro` history is handled separately as an explicit impor
 - `docs/differences-from-memory-lancedb-pro.md`
 - `scripts/import.openclaw.memory_lancedb_pro.py`
 
-## Current limitations
+## Troubleshooting
+
+### Recall returns stale or irrelevant context
+
+Check that the running provider is `scope-recall`, not the deprecated `lancepro` name, and remember that live Hermes runtime freshness requires a process restart/reload after code changes.
+
+```bash
+hermes memory status
+```
+
+### Vector stats show duplicate rows
+
+Run the repair script. SQLite remains truth; the vector layer is rebuildable companion state.
+
+```bash
+python scripts/repair.vector_index.py --hermes-home "$HERMES_HOME" --dry-run
+python scripts/repair.vector_index.py --hermes-home "$HERMES_HOME"
+```
+
+### Hosted embeddings are unavailable
+
+The provider should degrade to `local-hash`. That keeps the system usable but lowers semantic quality. Set `GOOGLE_API_KEY` or `OPENAI_API_KEY` in your private environment to use the configured hosted path.
+
+### OpenClaw `.lance` data does not appear automatically
+
+That is expected. OpenClaw history must be explicitly imported into SQLite truth rows before the companion vector index is rebuilt.
+
+## Current V1 limitations
 
 - vector sync is incremental by stable row id / `updated_at`, with duplicate-id/stale-row repair during normal sync; `scripts/repair.vector_index.py` can rebuild the LanceDB companion from SQLite truth when deeper storage hygiene is needed
+- semantic merge is intentionally conservative and rules/scoring-based; it is not a general-purpose contradiction resolver or LLM reasoning layer
+- smart extraction is rules-based for common preference / ops / project-fact sentences; it is not full OpenClaw-style LLM created/merged/skipped extraction parity
 - fallback `local-hash` is only a degraded offline path, not a true semantic model
 - old `lancepro` directory still exists as a compatibility shim until final cleanup is approved
-- standalone GitHub repo packaging is bootstrapped with `pyproject.toml` and GitHub Actions CI; a future repo split may still want a conventional `src/` layout
+- the supported Hermes install shape is still an unpacked plugin directory; the wheel is verified as a package artifact, not as a Hermes discovery mechanism
+
+See `docs/stability.md` for the exact V1 compatibility and non-goal boundaries.
 
 ## Packaging and release bootstrap
 
@@ -207,6 +398,7 @@ This directory now includes:
 - `CONTRIBUTING.md`
 - `.github/workflows/ci.yml`
 - `scripts/check.release.py`
+- `docs/stability.md`
 - `.env.example`
 - `scripts/repair.vector_index.py`
 
@@ -234,10 +426,18 @@ Current focused regression coverage includes:
 - vector table rebuild when embedder dimensions change
 - vector duplicate physical rows are repaired back to one row per id
 - vector delete/upsert failure preserves SQLite truth and marks vector status `needs_repair`
+- vector search failure degrades to lexical recall and marks vector status `needs_repair`
+- write-time exact dedupe prevents repeat SQLite rows for the same normalized content in the same scope/target
+- capture filtering blocks known maintenance prompts, trivial replies, obvious secret-bearing text, and overlong prompt blocks
+- semantic near-duplicate merge and conflict preservation
+- rules-based smart extraction from user turns into preference / ops / project fact memories
+- merge / export / govern provider tools
+- governance metadata classification and decay review candidates
+- provider tools cover store/search/forget/update/dedupe/merge/export/govern/repair/stats
 - explicit vector companion rebuild from SQLite truth via `scripts/repair.vector_index.py`
 - release gate automation via `scripts/check.release.py`
 - `scope_recall_stats` exposes physical rows, unique ids, and duplicate-row count
 - top-level `import scope_recall` stays light without Hermes runtime modules
 - `on_memory_write` remains an intentional observational no-op
 
-The repository is structured for GitHub publication as a beta plugin. Legacy `lancepro` compatibility remains intentionally covered by focused migration and alias tests during the deprecation window.
+The repository is structured for GitHub publication as a stable V1 Hermes memory provider. Legacy `lancepro` compatibility remains intentionally covered by focused migration and alias tests during the deprecation window.

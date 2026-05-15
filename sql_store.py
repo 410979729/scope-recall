@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from .gating import compact_text
+from .gating import compact_text, dedup_key
+from .governance import classify_memory
 
 ENTRY_DELIMITER = "\n§\n"
 
@@ -42,8 +45,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
     ensure_memory_columns(conn)
+    rebuild_fts_if_empty(conn)
     conn.commit()
-
 
 
 def _add_memory_column(conn: sqlite3.Connection, column: str) -> None:
@@ -51,6 +54,8 @@ def _add_memory_column(conn: sqlite3.Connection, column: str) -> None:
         "chat_id": "ALTER TABLE memories ADD COLUMN chat_id TEXT",
         "thread_id": "ALTER TABLE memories ADD COLUMN thread_id TEXT",
         "gateway_session_key": "ALTER TABLE memories ADD COLUMN gateway_session_key TEXT",
+        "dedup_key": "ALTER TABLE memories ADD COLUMN dedup_key TEXT",
+        "metadata": "ALTER TABLE memories ADD COLUMN metadata TEXT",
     }
     statement = allowed.get(column)
     if statement is None:
@@ -58,13 +63,27 @@ def _add_memory_column(conn: sqlite3.Connection, column: str) -> None:
     conn.execute(statement)
 
 
-
 def ensure_memory_columns(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
-    for column in ("chat_id", "thread_id", "gateway_session_key"):
+    for column in ("chat_id", "thread_id", "gateway_session_key", "dedup_key", "metadata"):
         if column not in existing:
             _add_memory_column(conn, column)
+    for row in conn.execute("SELECT id, content FROM memories WHERE dedup_key IS NULL OR dedup_key = ''").fetchall():
+        conn.execute("UPDATE memories SET dedup_key = ? WHERE id = ?", (dedup_key(str(row["content"])), row["id"]))
+    conn.execute("UPDATE memories SET metadata = '{}' WHERE metadata IS NULL OR metadata = ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_scope_recall_dedup ON memories(scope_id, target, dedup_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_scope_recall_target_updated ON memories(target, updated_at DESC)")
 
+
+def rebuild_fts_if_empty(conn: sqlite3.Connection) -> None:
+    memory_count = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+    fts_count = int(conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0])
+    if memory_count and fts_count == 0:
+        conn.execute("INSERT INTO memories_fts(memory_id, content, summary) SELECT id, content, summary FROM memories")
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def store_row(
@@ -83,16 +102,44 @@ def store_row(
     source: str,
     target: str,
     content: str,
-) -> tuple[str, str, str]:
-    now = datetime.now(timezone.utc).isoformat()
+    metadata: str = "{}",
+    allow_duplicate: bool = False,
+) -> tuple[str, str, str, bool]:
+    now = now_iso()
     summary = compact_text(content, 220)
+    key = dedup_key(content)
+    if not allow_duplicate:
+        existing = conn.execute(
+            """
+            SELECT id, summary, updated_at
+            FROM memories
+            WHERE scope_id = ? AND target = ? AND dedup_key = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (scope_id, target, key),
+        ).fetchone()
+        if existing is not None:
+            conn.execute("UPDATE memories SET updated_at = ? WHERE id = ?", (now, existing["id"]))
+            conn.commit()
+            return str(existing["id"]), str(existing["summary"]), now, False
+
+    metadata_payload = dict(classify_memory(content, target))
+    if metadata:
+        try:
+            metadata_payload.update(json.loads(metadata))
+        except Exception:
+            metadata_payload["raw_metadata"] = str(metadata)
+    metadata_json = json.dumps(metadata_payload, ensure_ascii=False, sort_keys=True)
+
     conn.execute(
         """
         INSERT INTO memories (
             id, scope_id, platform, user_id, chat_id, thread_id, gateway_session_key,
             agent_identity, agent_workspace,
-            session_id, source, target, content, summary, created_at, updated_at, last_recalled_turn
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            session_id, source, target, content, summary, created_at, updated_at, last_recalled_turn,
+            dedup_key, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
         """,
         (
             memory_id,
@@ -111,6 +158,8 @@ def store_row(
             summary,
             now,
             now,
+            key,
+            metadata_json,
         ),
     )
     conn.execute(
@@ -118,8 +167,87 @@ def store_row(
         (memory_id, content, summary),
     )
     conn.commit()
-    return memory_id, summary, now
+    return memory_id, summary, now, True
 
+
+def update_row(conn: sqlite3.Connection, *, memory_id: str, content: str, target: str | None = None) -> tuple[bool, str, str]:
+    row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    if row is None:
+        return False, "", ""
+    new_target = target or str(row["target"])
+    summary = compact_text(content, 220)
+    updated_at = now_iso()
+    metadata_payload: dict[str, Any] = {}
+    try:
+        metadata_payload.update(json.loads(str(row["metadata"] or "{}")))
+    except Exception:
+        pass
+    metadata_payload.update(classify_memory(content, new_target))
+    metadata_json = json.dumps(metadata_payload, ensure_ascii=False, sort_keys=True)
+    conn.execute(
+        """
+        UPDATE memories
+        SET content = ?, summary = ?, target = ?, updated_at = ?, dedup_key = ?, metadata = ?
+        WHERE id = ?
+        """,
+        (content, summary, new_target, updated_at, dedup_key(content), metadata_json, memory_id),
+    )
+    conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
+    conn.execute("INSERT INTO memories_fts(memory_id, content, summary) VALUES (?, ?, ?)", (memory_id, content, summary))
+    conn.commit()
+    return True, summary, updated_at
+
+
+def delete_rows(conn: sqlite3.Connection, ids: list[str]) -> int:
+    ids = [str(memory_id) for memory_id in ids if str(memory_id).strip()]
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    before = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+    conn.execute(f"DELETE FROM memories_fts WHERE memory_id IN ({placeholders})", ids)
+    conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", ids)
+    conn.commit()
+    after = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+    return max(0, before - after)
+
+
+def exact_duplicate_groups(conn: sqlite3.Connection, *, scope_id: str | None = None) -> list[dict[str, Any]]:
+    where = "WHERE scope_id = ?" if scope_id else ""
+    params: tuple[Any, ...] = (scope_id,) if scope_id else ()
+    rows = conn.execute(
+        f"""
+        SELECT scope_id, target, dedup_key, COUNT(*) AS count
+        FROM memories
+        {where}
+        GROUP BY scope_id, target, dedup_key
+        HAVING COUNT(*) > 1
+        ORDER BY count DESC
+        """,
+        params,
+    ).fetchall()
+    groups: list[dict[str, Any]] = []
+    for row in rows:
+        members = conn.execute(
+            """
+            SELECT id, content, created_at, updated_at
+            FROM memories
+            WHERE scope_id = ? AND target = ? AND dedup_key = ?
+            ORDER BY updated_at DESC, created_at DESC, id DESC
+            """,
+            (row["scope_id"], row["target"], row["dedup_key"]),
+        ).fetchall()
+        groups.append(
+            {
+                "scope_id": row["scope_id"],
+                "target": row["target"],
+                "dedup_key": row["dedup_key"],
+                "count": int(row["count"]),
+                "keep_id": str(members[0]["id"]),
+                "delete_ids": [str(member["id"]) for member in members[1:]],
+                "preview": str(members[0]["content"])[:180],
+            }
+        )
+    return groups
 
 
 def iter_curated_entries(hermes_home: Path | None) -> list[tuple[str, str, str]]:
@@ -145,7 +273,6 @@ def iter_curated_entries(hermes_home: Path | None) -> list[tuple[str, str, str]]
         for entry in entries:
             output.append((target, entry, updated_at))
     return output
-
 
 
 def curated_recall_item_id(target: str, content: str) -> str:

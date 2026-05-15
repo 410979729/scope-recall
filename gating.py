@@ -114,6 +114,35 @@ def dedup_key(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
+CAPTURE_SKIP_PATTERNS = [
+    re.compile(r"review the conversation above and update the skill library", re.IGNORECASE),
+    re.compile(r"call the memory tool .*output only the raw json", re.IGNORECASE),
+    re.compile(r"reply with ok and nothing else", re.IGNORECASE),
+    re.compile(r"^\s*you are an ai assistant", re.IGNORECASE),
+    re.compile(r"<available_skills>[\s\S]*?</available_skills>", re.IGNORECASE),
+]
+SECRET_RE = re.compile(
+    r"(?:api[_-]?key|token|secret|password|passwd|private[_-]?key)\s*[:=]\s*[^\s]+",
+    re.IGNORECASE,
+)
+
+
+def should_skip_capture(text: str, config: dict[str, Any] | None = None) -> bool:
+    config = config or {}
+    text = clean_text(text or "")
+    if not text or is_trivial(text):
+        return True
+    max_chars = int(config.get("capture_hard_max_chars") or 4000)
+    if max_chars > 0 and len(text) > max_chars:
+        return True
+    if SECRET_RE.search(text):
+        return True
+    for pattern in CAPTURE_SKIP_PATTERNS:
+        if pattern.search(text):
+            return True
+    return False
+
+
 def config_bool(config: dict[str, Any], key: str, default: bool) -> bool:
     value = config.get(key, default)
     if isinstance(value, bool):

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 """Release-readiness checks for scope-recall.
 
 This script runs local checks that are useful immediately before committing or
 publishing the plugin. It deliberately avoids reading secrets from the user's
 Hermes runtime environment; it scans only this source tree.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -19,6 +19,8 @@ import tempfile
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+PACKAGE_VERSION = "1.0.0"
+WHEEL_DATA_PREFIX = f"scope_recall-{PACKAGE_VERSION}.data/data"
 GENERATED_DIRS = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "build", "dist"}
 SECRET_PATTERNS = {
     "api_key_assignment": re.compile(r"(api_key|secret|password|passwd|token)\s*=\s*['\"][A-Za-z0-9._\-+/=]{12,}['\"]", re.I),
@@ -26,19 +28,54 @@ SECRET_PATTERNS = {
     "github_pat": re.compile(r"gh[pousr]_[A-Za-z0-9_]{20,}"),
     "openai_style": re.compile(r"sk-[A-Za-z0-9]{20,}"),
 }
+REQUIRED_SOURCE_FILES = {
+    "README.md",
+    "DESIGN.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "CONTRIBUTING.md",
+    "MANIFEST.in",
+    "pyproject.toml",
+    "plugin.yaml",
+    "config.json",
+    ".env.example",
+    "docs/migration.md",
+    "docs/differences-from-memory-lancedb-pro.md",
+    "docs/stability.md",
+    "scripts/import.openclaw.memory_lancedb_pro.py",
+    "scripts/repair.vector_index.py",
+}
 REQUIRED_WHEEL = {
     "scope_recall/__init__.py",
     "scope_recall/provider.py",
-    "scope_recall-0.2.0.data/data/plugin.yaml",
-    "scope_recall-0.2.0.data/data/config.json",
-    "scope_recall-0.2.0.data/data/README.md",
-    "scope_recall-0.2.0.data/data/DESIGN.md",
-    "scope_recall-0.2.0.data/data/CHANGELOG.md",
-    "scope_recall-0.2.0.data/data/.env.example",
-    "scope_recall-0.2.0.data/data/docs/migration.md",
-    "scope_recall-0.2.0.data/data/docs/differences-from-memory-lancedb-pro.md",
-    "scope_recall-0.2.0.data/data/scripts/import.openclaw.memory_lancedb_pro.py",
-    "scope_recall-0.2.0.data/data/scripts/repair.vector_index.py",
+    "scope_recall/memory_ops.py",
+    "scope_recall/tooling.py",
+    "scope_recall/governance.py",
+    "scope_recall/prompting.py",
+    "scope_recall/schemas.py",
+    f"{WHEEL_DATA_PREFIX}/plugin.yaml",
+    f"{WHEEL_DATA_PREFIX}/config.json",
+    f"{WHEEL_DATA_PREFIX}/README.md",
+    f"{WHEEL_DATA_PREFIX}/DESIGN.md",
+    f"{WHEEL_DATA_PREFIX}/CHANGELOG.md",
+    f"{WHEEL_DATA_PREFIX}/.env.example",
+    f"{WHEEL_DATA_PREFIX}/docs/migration.md",
+    f"{WHEEL_DATA_PREFIX}/docs/differences-from-memory-lancedb-pro.md",
+    f"{WHEEL_DATA_PREFIX}/docs/stability.md",
+    f"{WHEEL_DATA_PREFIX}/scripts/import.openclaw.memory_lancedb_pro.py",
+    f"{WHEEL_DATA_PREFIX}/scripts/repair.vector_index.py",
+}
+STABLE_TOOL_NAMES = {
+    "scope_recall_store",
+    "scope_recall_search",
+    "scope_recall_forget",
+    "scope_recall_update",
+    "scope_recall_dedupe",
+    "scope_recall_merge",
+    "scope_recall_export",
+    "scope_recall_govern",
+    "scope_recall_repair",
+    "scope_recall_stats",
 }
 
 
@@ -53,11 +90,19 @@ def fail_if_bad(result: dict[str, object]) -> None:
         raise SystemExit(int(result["returncode"]))
 
 
+def read_text(rel: str) -> str:
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
 def scan_tree() -> dict[str, list[str]]:
     findings: dict[str, list[str]] = {"generated_artifacts": [], "secrets": [], "private_paths": []}
     for path in ROOT.rglob("*"):
         rel = path.relative_to(ROOT)
+        if ".git" in rel.parts:
+            continue
         if any(part in GENERATED_DIRS for part in rel.parts):
+            if path.exists():
+                findings["generated_artifacts"].append(str(rel))
             continue
         if rel.match("review-report.*.md") or rel.name == ".env":
             continue
@@ -74,6 +119,41 @@ def scan_tree() -> dict[str, list[str]]:
     return findings
 
 
+def metadata_check() -> dict[str, object]:
+    pyproject = read_text("pyproject.toml")
+    plugin = read_text("plugin.yaml")
+    readme = read_text("README.md")
+    changelog = read_text("CHANGELOG.md")
+    stability = read_text("docs/stability.md")
+    schemas = read_text("schemas.py")
+
+    missing_source = sorted(rel for rel in REQUIRED_SOURCE_FILES if not (ROOT / rel).is_file())
+    failures: list[str] = []
+    required_snippets = {
+        "pyproject version": f'version = "{PACKAGE_VERSION}"',
+        "plugin version": f"version: {PACKAGE_VERSION}",
+        "stable classifier": "Development Status :: 5 - Production/Stable",
+        "changelog v1": f"## [{PACKAGE_VERSION}]",
+        "readme v1": "first stable V1 release line",
+        "stability truth source": "SQLite is the truth source",
+        "stability tools": "scope_recall_stats",
+    }
+    searchable = "\n".join([pyproject, plugin, readme, changelog, stability])
+    for label, snippet in required_snippets.items():
+        if snippet not in searchable:
+            failures.append(f"missing {label}: {snippet}")
+    if "Development Status :: 4 - Beta" in searchable:
+        failures.append("beta classifier still present")
+    if 'version = "0.' in pyproject or "version: 0." in plugin:
+        failures.append("0.x package/plugin version still present")
+    for tool_name in STABLE_TOOL_NAMES:
+        if tool_name not in stability:
+            failures.append(f"stable tool missing from stability doc: {tool_name}")
+        if tool_name.upper() not in schemas.upper():
+            failures.append(f"stable tool missing from schemas.py: {tool_name}")
+    return {"ok": not missing_source and not failures, "missing_source": missing_source, "failures": failures}
+
+
 def wheel_check() -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="scope.recall.dist.") as tmp:
         dist = pathlib.Path(tmp)
@@ -82,6 +162,9 @@ def wheel_check() -> dict[str, object]:
         wheels = list(dist.glob("scope_recall-*.whl"))
         if len(wheels) != 1:
             raise SystemExit(f"expected one wheel, found {wheels}")
+        expected_name = f"scope_recall-{PACKAGE_VERSION}-py3-none-any.whl"
+        if wheels[0].name != expected_name:
+            raise SystemExit(f"expected wheel {expected_name}, got {wheels[0].name}")
         with zipfile.ZipFile(wheels[0]) as zf:
             names = set(zf.namelist())
         missing = sorted(item for item in REQUIRED_WHEEL if item not in names)
@@ -115,16 +198,22 @@ def cleanup_generated() -> None:
 
 def main() -> int:
     cleanup_generated()
+    metadata = metadata_check()
     for cmd in ([sys.executable, "-m", "pytest", "-q"], [sys.executable, "-m", "compileall", "-q", "."]):
         fail_if_bad(run(cmd))
     wheel = wheel_check()
+    cleanup_generated()
     scan = scan_tree()
     blocking_scan = {key: value for key, value in scan.items() if value}
-    cleanup_generated()
+    failures: dict[str, object] = {}
+    if not metadata["ok"]:
+        failures["metadata"] = metadata
     if blocking_scan:
-        print(json.dumps({"ok": False, "scan": blocking_scan, "wheel": wheel}, ensure_ascii=False, indent=2))
+        failures["scan"] = blocking_scan
+    if failures:
+        print(json.dumps({"ok": False, "failures": failures, "wheel": wheel}, ensure_ascii=False, indent=2))
         return 1
-    print(json.dumps({"ok": True, "wheel": wheel, "scan": scan}, ensure_ascii=False, indent=2))
+    print(json.dumps({"ok": True, "metadata": metadata, "wheel": wheel, "scan": scan}, ensure_ascii=False, indent=2))
     return 0
 
 

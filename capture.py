@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import threading
 import uuid
 from typing import Any
 
+from .gating import should_skip_capture
 from .sql_store import store_row
 from .vector_runtime import upsert_vector_record
 
@@ -18,7 +20,6 @@ def start_writer(provider: Any) -> None:
     provider._stop.clear()
     provider._writer_thread = threading.Thread(target=writer_loop, args=(provider,), daemon=True, name="scope-recall-writer")
     provider._writer_thread.start()
-
 
 
 def writer_loop(provider: Any) -> None:
@@ -50,14 +51,12 @@ def writer_loop(provider: Any) -> None:
             provider._write_queue.task_done()
 
 
-
 def flush_writer(provider: Any, timeout: float = 2.0) -> bool:
     if not provider._writer_thread:
         return True
     done = threading.Event()
     provider._write_queue.put({"kind": "flush", "event": done})
     return done.wait(timeout=timeout)
-
 
 
 def shutdown_writer(provider: Any, timeout: float = 3.0) -> None:
@@ -69,7 +68,6 @@ def shutdown_writer(provider: Any, timeout: float = 3.0) -> None:
     provider._writer_thread = None
 
 
-
 def enqueue_store(
     provider: Any,
     *,
@@ -79,6 +77,8 @@ def enqueue_store(
     session_id: str,
     metadata: dict[str, Any] | None = None,
 ) -> None:
+    if should_skip_capture(content, provider._config):
+        return
     provider._write_queue.put(
         {
             "kind": "store",
@@ -91,7 +91,6 @@ def enqueue_store(
     )
 
 
-
 def store_now(
     provider: Any,
     *,
@@ -100,12 +99,15 @@ def store_now(
     target: str,
     session_id: str,
     metadata: dict[str, Any] | None = None,
-) -> str:
-    del metadata
+    allow_duplicate: bool = False,
+) -> tuple[str, bool]:
+    metadata_json = json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True)
+    if should_skip_capture(content, provider._config):
+        return "", False
     conn = provider._require_conn()
     memory_id = uuid.uuid4().hex
     with provider._lock:
-        memory_id, summary, updated_at = store_row(
+        memory_id, summary, updated_at, inserted = store_row(
             conn,
             memory_id=memory_id,
             scope_id=provider._scope_id,
@@ -120,14 +122,17 @@ def store_now(
             source=source,
             target=target,
             content=content,
+            metadata=metadata_json,
+            allow_duplicate=allow_duplicate or str(source).startswith("legacy-"),
         )
-    upsert_vector_record(
-        provider,
-        id=memory_id,
-        source=source,
-        target=target,
-        content=content,
-        summary=summary,
-        updated_at=updated_at,
-    )
-    return memory_id
+    if inserted:
+        upsert_vector_record(
+            provider,
+            id=memory_id,
+            source=source,
+            target=target,
+            content=content,
+            summary=summary,
+            updated_at=updated_at,
+        )
+    return memory_id, inserted

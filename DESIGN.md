@@ -27,10 +27,11 @@ That split is deliberate. SQLite is the durable source of truth; LanceDB is the 
 5. Isolate memory strongly enough for gateway multi-chat / multi-topic use.
 6. Preserve an offline-capable default path for local operation and open-source onboarding.
 
-## Non-goals for this iteration
+## Non-goals for V1
 
-- full long-term memory governance pipeline
-- multi-tier summarization/decay/extraction orchestration
+- full OpenClaw `memory-lancedb-pro` parity
+- LLM-backed created/merged/skipped governance parity
+- multi-tier summarization / promotion / compression orchestration
 - cloud-only dependency requirement
 - forcing external embedding APIs for basic functionality
 
@@ -249,15 +250,13 @@ Subagents do not get tool schemas and cannot use them.
 
 ## Open-source packaging expectations
 
-Before GitHub release, finish these:
+For V1 release/publish, keep these gates green:
 
-1. complete rename from `lancepro` to `scope-recall` in runtime config and plugin directory usage
-2. port all legacy regression tests
-3. clean deprecation warnings and compatibility shims
-4. add LICENSE and release notes
-5. write migration notes from `lancepro`
-6. verify systemd runtime with real gateway traffic
-7. decide whether to keep old tool aliases for one release or remove them immediately
+1. metadata stays on `1.0.0` / production-stable until the next semver release
+2. README, DESIGN, CHANGELOG, stability contract, migration docs, and upstream-difference docs stay in sync
+3. local release gate passes with `python scripts/check.release.py`
+4. live gateway freshness is verified separately after installing or restarting a real Hermes service
+5. the deprecated `lancepro` shim remains covered by tests until its removal is explicitly announced in a later release
 
 ## Current status
 
@@ -269,13 +268,13 @@ What is already real now:
 - hybrid retrieval path exists
 - legacy local rename migration exists
 - focused tests for loading / hybrid recall / curated memory / stats pass
-- release docs now include migration notes, upstream differences, and an OpenClaw import script skeleton
-- vector sync now repairs stale ids and duplicate physical rows during normal initialization
+- release docs include migration notes, upstream differences, a V1 stability contract, and an OpenClaw import script
+- vector sync repairs stale ids and duplicate physical rows during normal initialization
 - stats distinguish vector physical rows, unique ids, and duplicate extra rows
 - top-level package import is lightweight enough for clean wheel/venv checks without Hermes runtime modules
+- release automation runs the full `scripts/check.release.py` gate in CI
 
-What still needs finishing before public release:
+What remains outside source-tree readiness:
 
-- decide the final fate/timeline of the deprecated `lancepro` shim
-- after installing into a live Hermes profile, run human-triggered live gateway verification under the real service path before claiming that the running service has loaded the newest code
-- create or push the standalone GitHub remote repository
+- live Hermes gateway freshness still requires a restart/reload plus runtime smoke verification after deployment
+- GitHub publication requires pushing a clean commit, waiting for remote CI, and creating the `v1.0.0` tag/release

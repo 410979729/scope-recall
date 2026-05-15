@@ -11,6 +11,7 @@ Before opening a PR or publishing a fork:
 - treat OpenClaw reuse as explicit import/migration, not transparent drop-in compatibility
 - do not remove the `lancepro` compatibility shim until downstream users and configs are cleaned up
 - preserve an explicit vector repair path via `scripts/repair.vector_index.py`
+- `scope-recall` uses a SQLite truth layer plus a rebuildable LanceDB vector companion; see the architecture and stability contract for details
 - keep `queue_prefetch()` as a no-op unless you also prove cross-turn topic bleed protections another way
 
 ## Local development

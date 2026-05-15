@@ -35,6 +35,8 @@ _QUERY_STOPWORDS = {
     "their",
     "my",
     "the",
+    "a",
+    "an",
     "this",
     "that",
     "these",
@@ -72,11 +74,23 @@ def lexical_score(*, query: str, content: str, summary: str, source: str, target
     phrase_bonus = 0.35 if normalized_query and normalized_query in haystack else 0.0
     source_bonus = 0.18 if source == "builtin-curated" else 0.08 if source.startswith("tool") else 0.02
     target_bonus = 0.08 if target == "user" else 0.0
-    return overlap * 0.72 + phrase_bonus + source_bonus + target_bonus
+    return max(0.0, min(1.0, overlap * 0.72 + phrase_bonus + source_bonus + target_bonus))
 
+
+
+def semantic_similarity(left: str, right: str) -> float:
+    left_tokens = _canonical_tokens(left)
+    right_tokens = _canonical_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    intersection = left_tokens & right_tokens
+    union = left_tokens | right_tokens
+    jaccard = len(intersection) / max(len(union), 1)
+    containment = len(intersection) / max(min(len(left_tokens), len(right_tokens)), 1)
+    return max(jaccard, containment * 0.82)
 
 
 def combine_scores(item: dict[str, Any], *, lexical_weight: float, vector_weight: float) -> float:
     lexical = float(item.get("lexical_score") or 0.0)
     vector = float(item.get("vector_score") or 0.0)
-    return lexical * lexical_weight + vector * vector_weight
+    return max(0.0, min(1.0, lexical * lexical_weight + vector * vector_weight))

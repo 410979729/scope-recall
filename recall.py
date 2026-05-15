@@ -38,19 +38,27 @@ class RecallService:
 
         merged: dict[str, RecallItem] = {}
         for item in lexical_candidates + vector_candidates + curated_candidates:
-            key = item.id if item.id.startswith("curated:") else self.provider._dedup_key(item.content)
-            current = merged.get(key)
+            item_key = item.id if item.id.startswith("curated:") else self.provider._dedup_key(item.content)
+            current = merged.get(item_key)
             if current is None:
-                merged[key] = item
+                merged[item_key] = item
                 continue
-            meta = dict(current.metadata or {})
             incoming = dict(item.metadata or {})
-            meta["lexical_score"] = max(float(meta.get("lexical_score") or 0.0), float(incoming.get("lexical_score") or 0.0))
-            meta["vector_score"] = max(float(meta.get("vector_score") or 0.0), float(incoming.get("vector_score") or 0.0))
             preferred = current if current.updated_at >= item.updated_at else item
+            other = item if preferred is current else current
+            meta = dict(preferred.metadata or {})
+            for meta_key, value in dict(other.metadata or {}).items():
+                meta.setdefault(meta_key, value)
+            current_meta = dict(current.metadata or {})
+            for meta_key in ("lexical_score", "vector_score", "base_score", "recency_bonus"):
+                meta[meta_key] = max(
+                    float(meta.get(meta_key) or 0.0),
+                    float(incoming.get(meta_key) or 0.0),
+                    float(current_meta.get(meta_key) or 0.0),
+                )
             preferred.metadata = meta
             preferred.score = self.final_score(meta)
-            merged[key] = preferred
+            merged[item_key] = preferred
 
         results = list(merged.values())
         min_score = float(retrieval_cfg.get("min_score") or self.provider._config_value("min_score", 0.18))

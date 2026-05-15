@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 """Import historical OpenClaw `memory-lancedb-pro` records into scope-recall.
 
 This importer is conservative and idempotent:
@@ -8,6 +6,8 @@ This importer is conservative and idempotent:
 - it never overwrites scope-recall truth rows blindly
 - repeated runs of the same source rows should not create duplicates
 """
+
+from __future__ import annotations
 
 import argparse
 import importlib.util
@@ -33,7 +33,12 @@ if PACKAGE_NAME not in sys.modules:
     sys.modules[PACKAGE_NAME] = package
     spec.loader.exec_module(package)
 
-from scope_recall_script_runtime.models import ImportedMemoryRow, build_import_fingerprint, json_dumps_stable, normalize_import_timestamp
+from scope_recall_script_runtime.models import (  # noqa: E402
+    ImportedMemoryRow,
+    build_import_fingerprint,
+    json_dumps_stable,
+    normalize_import_timestamp,
+)
 
 
 
