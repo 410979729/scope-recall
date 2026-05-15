@@ -252,11 +252,12 @@ Subagents do not get tool schemas and cannot use them.
 
 For V1 release/publish, keep these gates green:
 
-1. metadata stays on `1.0.0` / production-stable until the next semver release
-2. README, DESIGN, CHANGELOG, stability contract, migration docs, and upstream-difference docs stay in sync
-3. local release gate passes with `python scripts/check.release.py`
-4. live gateway freshness is verified separately after installing or restarting a real Hermes service
-5. the deprecated `lancepro` shim remains covered by tests until its removal is explicitly announced in a later release
+1. package and plugin metadata stay on `1.0.0` until the next semver release
+2. public maturity wording remains beta / release-candidate until broader field testing justifies a production-stable classifier
+3. README, DESIGN, CHANGELOG, stability contract, migration docs, and upstream-difference docs stay in sync
+4. local release gate passes with `python scripts/check.release.py`
+5. live gateway freshness is verified separately after installing or restarting a real Hermes service
+6. the deprecated `lancepro` shim remains covered by tests until its removal is explicitly announced in a later release
 
 ## Current status
 
