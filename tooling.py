@@ -114,10 +114,13 @@ class ScopeRecallToolService:
         return self._json({"updated": True, "id": memory_id, "summary": summary, "updated_at": updated_at})
 
     def _handle_dedupe(self, args: dict[str, Any]) -> str:
+        if not self._operator_mode_enabled():
+            return tool_error("scope_recall_dedupe requires maintenance_tools_enabled=true")
+        scope_only = self._bool_arg(args, "scope_only", True)
         return self._json(
             self.provider._dedupe_memories(
                 dry_run=self._bool_arg(args, "dry_run", True),
-                scope_only=self._bool_arg(args, "scope_only", False),
+                scope_only=scope_only,
             )
         )
 
@@ -137,23 +140,31 @@ class ScopeRecallToolService:
         return self._json(self.provider._merge_memories(target_id, [str(item) for item in source_ids], content, target))
 
     def _handle_export(self, args: dict[str, Any]) -> str:
+        scope_only = self._bool_arg(args, "scope_only", True)
+        if not scope_only and not self._operator_mode_enabled():
+            return tool_error("scope_only=false requires maintenance_tools_enabled=true")
         return self._json(
             self.provider._export_memories(
                 fmt=str(args.get("format") or "jsonl"),
-                scope_only=self._bool_arg(args, "scope_only", True),
+                scope_only=scope_only,
             )
         )
 
     def _handle_govern(self, args: dict[str, Any]) -> str:
+        if not self._operator_mode_enabled():
+            return tool_error("scope_recall_govern requires maintenance_tools_enabled=true")
+        scope_only = self._bool_arg(args, "scope_only", True)
         return self._json(
             self.provider._govern_memories(
                 dry_run=self._bool_arg(args, "dry_run", True),
-                scope_only=self._bool_arg(args, "scope_only", True),
+                scope_only=scope_only,
             )
         )
 
     def _handle_repair(self, args: dict[str, Any]) -> str:
         del args
+        if not self._operator_mode_enabled():
+            return tool_error("scope_recall_repair requires maintenance_tools_enabled=true")
         return self._json(self.provider._repair_vector())
 
     def _handle_stats(self, args: dict[str, Any]) -> str:
@@ -176,6 +187,9 @@ class ScopeRecallToolService:
                 return value.strip().lower() not in {"0", "false", "no", "off"}
             return value.strip().lower() in {"1", "true", "yes", "on"}
         return bool(value)
+
+    def _operator_mode_enabled(self) -> bool:
+        return bool(self.provider._config_value("maintenance_tools_enabled", False))
 
     def _serialize_recall_item(self, item: Any) -> dict[str, Any]:
         metadata = item.metadata or {}

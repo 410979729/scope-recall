@@ -1,6 +1,6 @@
 # Scope Recall V1 stability contract
 
-`scope-recall` 1.0.0 is the first stable release line for the Hermes Scope Recall memory provider.
+`scope-recall` 1.0.1 is the first stable release line for the Hermes Scope Recall memory provider.
 
 This document defines what V1 commits to keep stable, what may evolve in minor releases, and what remains explicitly outside the V1 compatibility promise.
 
@@ -53,6 +53,8 @@ V1 keeps these behavior boundaries stable:
 - built-in curated memory writes are not mirrored into SQLite
 - `on_memory_write()` remains observational unless a later major release changes storage ownership
 - subagent / non-primary contexts do not expose Scope Recall tools
+- maintenance tools (`scope_recall_dedupe`, `scope_recall_govern`, and `scope_recall_repair`) are hidden and fail closed unless `maintenance_tools_enabled=true`
+- `scope_recall_export` is available for scoped exports by default; `scope_only=false` requires `maintenance_tools_enabled=true`
 - runtime scope isolation includes agent workspace, agent identity, platform, user, chat/thread or gateway session key
 
 ## Stable V1 tool surface

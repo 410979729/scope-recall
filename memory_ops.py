@@ -74,9 +74,18 @@ def find_semantic_merge_candidate(provider: Any, content: str, target: str) -> t
 
 def update_memory(provider: Any, memory_id: str, content: str, target: str | None = None) -> tuple[bool, str, str]:
     with provider._lock:
-        updated, summary, updated_at = update_row(provider._require_conn(), memory_id=memory_id, content=content, target=target)
+        updated, summary, updated_at = update_row(
+            provider._require_conn(),
+            memory_id=memory_id,
+            content=content,
+            target=target,
+            scope_id=provider._scope_id,
+        )
     if updated:
-        row = provider._require_conn().execute("SELECT source, target, content, summary, updated_at FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        row = provider._require_conn().execute(
+            "SELECT source, target, content, summary, updated_at FROM memories WHERE id = ? AND scope_id = ?",
+            (memory_id, provider._scope_id),
+        ).fetchone()
         if row is not None:
             upsert_vector_record(
                 provider,
@@ -94,10 +103,10 @@ def merge_memories(provider: Any, target_id: str, source_ids: list[str], content
     source_ids = [str(memory_id) for memory_id in source_ids if str(memory_id).strip()]
     conn = provider._require_conn()
     with provider._lock:
-        target_row = conn.execute("SELECT * FROM memories WHERE id = ?", (target_id,)).fetchone()
+        target_row = conn.execute("SELECT * FROM memories WHERE id = ? AND scope_id = ?", (target_id, provider._scope_id)).fetchone()
         source_rows = conn.execute(
-            f"SELECT * FROM memories WHERE id IN ({','.join('?' for _ in source_ids)})" if source_ids else "SELECT * FROM memories WHERE 0",
-            source_ids,
+            f"SELECT * FROM memories WHERE id IN ({','.join('?' for _ in source_ids)}) AND scope_id = ?" if source_ids else "SELECT * FROM memories WHERE 0",
+            [*source_ids, provider._scope_id] if source_ids else [],
         ).fetchall()
     if target_row is None:
         return {"merged": False, "error": "target_id not found", "target_id": target_id, "deleted": 0}
@@ -178,26 +187,42 @@ def govern_memories(provider: Any, *, dry_run: bool = True, scope_only: bool = T
             decay_candidates.append(str(row["id"]))
             classified["tier"] = "archive"
         tiers[tier] = tiers.get(tier, 0) + 1
-        updates.append((json.dumps(classified, ensure_ascii=False, sort_keys=True), str(row["id"])))
+        updates.append((json.dumps(classified, ensure_ascii=False, sort_keys=True), str(row["id"]), provider._scope_id))
     if not dry_run:
         with provider._lock:
-            conn.executemany("UPDATE memories SET metadata = ? WHERE id = ?", updates)
+            if scope_only:
+                conn.executemany("UPDATE memories SET metadata = ? WHERE id = ? AND scope_id = ?", updates)
+            else:
+                conn.executemany(
+                    "UPDATE memories SET metadata = ? WHERE id = ?",
+                    [(metadata, memory_id) for metadata, memory_id, _scope_id in updates],
+                )
             conn.commit()
     return {"dry_run": dry_run, "scope_only": scope_only, "total": len(rows), "tiers": tiers, "decay_candidates": decay_candidates}
 
 
 def delete_memories(provider: Any, ids: list[str]) -> int:
+    requested_ids = [str(memory_id) for memory_id in ids if str(memory_id).strip()]
+    if not requested_ids:
+        return 0
+    placeholders = ",".join("?" for _ in requested_ids)
     with provider._lock:
-        deleted_changes = delete_rows(provider._require_conn(), ids)
-    if provider._vector_store and ids:
+        scoped_ids = [
+            str(row["id"])
+            for row in provider._require_conn()
+            .execute(f"SELECT id FROM memories WHERE id IN ({placeholders}) AND scope_id = ?", [*requested_ids, provider._scope_id])
+            .fetchall()
+        ]
+        deleted_changes = delete_rows(provider._require_conn(), scoped_ids, scope_id=provider._scope_id)
+    if provider._vector_store and scoped_ids:
         try:
-            provider._vector_store.delete_by_ids(ids)
+            provider._vector_store.delete_by_ids(scoped_ids)
         except Exception as exc:
             mark_vector_needs_repair(provider, exc)
     return deleted_changes
 
 
-def dedupe_memories(provider: Any, *, dry_run: bool = True, scope_only: bool = False) -> dict[str, Any]:
+def dedupe_memories(provider: Any, *, dry_run: bool = True, scope_only: bool = True) -> dict[str, Any]:
     groups = exact_duplicate_groups(provider._require_conn(), scope_id=provider._scope_id if scope_only else None)
     delete_ids = [memory_id for group in groups for memory_id in group["delete_ids"]]
     payload: dict[str, Any] = {
@@ -210,7 +235,16 @@ def dedupe_memories(provider: Any, *, dry_run: bool = True, scope_only: bool = F
     if dry_run:
         payload["deleted"] = 0
         return payload
-    payload["deleted"] = delete_memories(provider, delete_ids)
+    if scope_only:
+        payload["deleted"] = delete_memories(provider, delete_ids)
+    else:
+        with provider._lock:
+            payload["deleted"] = delete_rows(provider._require_conn(), delete_ids)
+        if provider._vector_store and delete_ids:
+            try:
+                provider._vector_store.delete_by_ids(delete_ids)
+            except Exception as exc:
+                mark_vector_needs_repair(provider, exc)
     return payload
 
 

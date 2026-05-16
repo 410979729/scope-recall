@@ -9,6 +9,12 @@ from scope_recall.models import RuntimeScope
 from scope_recall.scope import build_scope_id
 
 
+def _write_scope_recall_config(hermes_home, values):
+    config_path = hermes_home / "scope-recall" / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(values, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 @pytest.fixture
 def provider(tmp_path):
     plugin = load_memory_provider("scope-recall")
@@ -100,6 +106,21 @@ def test_dedup_prevents_repeat_injection_within_min_repeated(provider):
     provider.on_turn_start(9, "What is the deploy command for this service?")
     third = provider.prefetch("What is the deploy command for this service?")
     assert "uv run app" in third.lower()
+
+
+def test_maintenance_tool_schemas_require_operator_config(provider):
+    names = {schema["name"] for schema in provider.get_tool_schemas()}
+    assert "scope_recall_dedupe" not in names
+    assert "scope_recall_govern" not in names
+    assert "scope_recall_repair" not in names
+    assert "scope_recall_export" in names
+    assert "scope_recall_stats" in names
+
+    provider._config["maintenance_tools_enabled"] = True
+    operator_names = {schema["name"] for schema in provider.get_tool_schemas()}
+    assert "scope_recall_dedupe" in operator_names
+    assert "scope_recall_govern" in operator_names
+    assert "scope_recall_repair" in operator_names
 
 
 def test_scope_isolation_uses_user_and_profile(tmp_path):
@@ -747,6 +768,48 @@ def test_update_tool_replaces_memory_and_old_fts_is_removed(provider):
     assert new_results["results"][0]["target"] == "ops"
 
 
+def test_update_tool_cannot_modify_memory_from_another_scope(tmp_path):
+    p1 = load_memory_provider("scope-recall")
+    p2 = load_memory_provider("scope-recall")
+    assert p1 is not None and p2 is not None
+
+    p1.initialize(
+        "session-a",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-1",
+    )
+    p2.initialize(
+        "session-b",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-2",
+    )
+
+    try:
+        stored = json.loads(p1.handle_tool_call("scope_recall_store", {"content": "Group one private note.", "target": "memory"}))
+        blocked = json.loads(
+            p2.handle_tool_call("scope_recall_update", {"id": stored["id"], "content": "Group two overwrite attempt."})
+        )
+
+        assert blocked["error"]
+        row = p1._require_conn().execute("SELECT content FROM memories WHERE id = ?", (stored["id"],)).fetchone()
+        assert row is not None
+        assert row["content"] == "Group one private note."
+    finally:
+        p1.shutdown()
+        p2.shutdown()
+
+
+
 def test_dedupe_tool_dry_run_and_apply_collapses_existing_duplicates(provider):
     first = json.loads(
         provider.handle_tool_call("scope_recall_store", {"content": "Duplicate note for cleanup.", "target": "memory"})
@@ -756,9 +819,14 @@ def test_dedupe_tool_dry_run_and_apply_collapses_existing_duplicates(provider):
     with provider._lock:
         provider._store_now(content="Duplicate note for cleanup.", source="legacy-import", target="memory", session_id="legacy", semantic_merge=False)
 
+    blocked = json.loads(provider.handle_tool_call("scope_recall_dedupe", {"dry_run": True}))
+    assert blocked["error"]
+
+    provider._config["maintenance_tools_enabled"] = True
     dry = json.loads(provider.handle_tool_call("scope_recall_dedupe", {"dry_run": True}))
     assert dry["duplicate_groups"] == 1
     assert dry["duplicates"] == 1
+    assert dry["scope_only"] is True
 
     applied = json.loads(provider.handle_tool_call("scope_recall_dedupe", {"dry_run": False}))
     assert applied["deleted"] == 1
@@ -766,7 +834,7 @@ def test_dedupe_tool_dry_run_and_apply_collapses_existing_duplicates(provider):
     assert stats["total_memories"] == 1
 
 
-def test_dedupe_scope_only_false_collapses_duplicates_across_scopes(tmp_path):
+def test_dedupe_scope_only_false_requires_operator_mode(tmp_path):
     p1 = load_memory_provider("scope-recall")
     p2 = load_memory_provider("scope-recall")
     assert p1 is not None and p2 is not None
@@ -812,6 +880,58 @@ def test_dedupe_scope_only_false_collapses_duplicates_across_scopes(tmp_path):
             )
 
         dry = json.loads(p1.handle_tool_call("scope_recall_dedupe", {"dry_run": True, "scope_only": False}))
+        assert dry["error"]
+
+        applied = json.loads(p1.handle_tool_call("scope_recall_dedupe", {"dry_run": False, "scope_only": False}))
+        assert applied["error"]
+        stats = json.loads(p1.handle_tool_call("scope_recall_stats", {}))
+        assert stats["total_memories"] == 4
+        assert stats["scope_memories"] == 2
+    finally:
+        p1.shutdown()
+        p2.shutdown()
+
+
+def test_dedupe_scope_only_false_allowed_only_with_operator_config(tmp_path):
+    _write_scope_recall_config(tmp_path, {"maintenance_tools_enabled": True})
+    p1 = load_memory_provider("scope-recall")
+    p2 = load_memory_provider("scope-recall")
+    assert p1 is not None and p2 is not None
+
+    p1.initialize(
+        "session-a",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-1",
+    )
+    p2.initialize(
+        "session-b",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-2",
+    )
+
+    try:
+        for plugin in (p1, p2):
+            for _ in range(2):
+                plugin._store_now(
+                    content="Operator duplicate note across scopes.",
+                    source="legacy-import",
+                    target="memory",
+                    session_id="legacy",
+                    semantic_merge=False,
+                    allow_duplicate=True,
+                )
+
+        dry = json.loads(p1.handle_tool_call("scope_recall_dedupe", {"dry_run": True, "scope_only": False}))
         assert dry["duplicate_groups"] == 2
         assert dry["duplicates"] == 2
 
@@ -850,6 +970,10 @@ def test_repair_tool_rebuilds_vector_companion(provider):
     provider._vector_status = "needs_repair"
     provider._vector_message = "forced test damage"
 
+    blocked = json.loads(provider.handle_tool_call("scope_recall_repair", {}))
+    assert blocked["error"]
+
+    provider._config["maintenance_tools_enabled"] = True
     payload = json.loads(provider.handle_tool_call("scope_recall_repair", {}))
 
     assert payload["repaired"] is True
@@ -903,6 +1027,51 @@ def test_semantic_merge_does_not_hide_conflicting_memory(provider):
     assert stats["total_memories"] == 2
 
 
+def test_merge_tool_cannot_read_or_delete_memory_from_another_scope(tmp_path):
+    p1 = load_memory_provider("scope-recall")
+    p2 = load_memory_provider("scope-recall")
+    assert p1 is not None and p2 is not None
+
+    p1.initialize(
+        "session-a",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-1",
+    )
+    p2.initialize(
+        "session-b",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-2",
+    )
+
+    try:
+        a = json.loads(p1.handle_tool_call("scope_recall_store", {"content": "Group one target note.", "target": "memory"}))
+        b = json.loads(p2.handle_tool_call("scope_recall_store", {"content": "Group two source note.", "target": "memory"}))
+        result = json.loads(p1.handle_tool_call("scope_recall_merge", {"target_id": a["id"], "source_ids": [b["id"]]}))
+
+        assert result["merged"] is True
+        assert result["deleted"] == 0
+        assert result["source_ids"] == []
+        other_row = p2._require_conn().execute("SELECT content FROM memories WHERE id = ?", (b["id"],)).fetchone()
+        assert other_row is not None
+        assert other_row["content"] == "Group two source note."
+        own_row = p1._require_conn().execute("SELECT content FROM memories WHERE id = ?", (a["id"],)).fetchone()
+        assert own_row is not None
+        assert own_row["content"] == "Group one target note."
+    finally:
+        p1.shutdown()
+        p2.shutdown()
+
+
 def test_merge_tool_combines_memory_content_and_deletes_source(provider):
     a = json.loads(provider.handle_tool_call("scope_recall_store", {"content": "Joy prefers concise replies.", "target": "user"}))
     b = json.loads(provider.handle_tool_call("scope_recall_store", {"content": "Joy likes warm answers.", "target": "user"}))
@@ -936,6 +1105,89 @@ def test_export_tool_returns_jsonl_records(provider):
     assert any(row["id"] == stored["id"] and row["content"] == "Exportable deploy memory uses uv run app." for row in parsed)
 
 
+def test_export_scope_only_false_requires_operator_mode(tmp_path):
+    p1 = load_memory_provider("scope-recall")
+    p2 = load_memory_provider("scope-recall")
+    assert p1 is not None and p2 is not None
+
+    p1.initialize(
+        "session-a",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-1",
+    )
+    p2.initialize(
+        "session-b",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-2",
+    )
+
+    try:
+        own = json.loads(p1.handle_tool_call("scope_recall_store", {"content": "Group one export note.", "target": "ops"}))
+        other = json.loads(p2.handle_tool_call("scope_recall_store", {"content": "Group two export note.", "target": "ops"}))
+
+        scoped = json.loads(p1.handle_tool_call("scope_recall_export", {"format": "json", "scope_only": True}))
+        assert scoped["count"] == 1
+        assert scoped["data"][0]["id"] == own["id"]
+
+        blocked = json.loads(p1.handle_tool_call("scope_recall_export", {"format": "json", "scope_only": False}))
+        assert blocked["error"]
+        assert other["id"] not in json.dumps(blocked)
+    finally:
+        p1.shutdown()
+        p2.shutdown()
+
+
+def test_export_scope_only_false_allowed_only_with_operator_config(tmp_path):
+    _write_scope_recall_config(tmp_path, {"maintenance_tools_enabled": True})
+    p1 = load_memory_provider("scope-recall")
+    p2 = load_memory_provider("scope-recall")
+    assert p1 is not None and p2 is not None
+
+    p1.initialize(
+        "session-a",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-1",
+    )
+    p2.initialize(
+        "session-b",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="yuheng",
+        agent_workspace="hermes",
+        user_id="joy",
+        chat_id="group-2",
+    )
+
+    try:
+        own = json.loads(p1.handle_tool_call("scope_recall_store", {"content": "Operator group one export note.", "target": "ops"}))
+        other = json.loads(p2.handle_tool_call("scope_recall_store", {"content": "Operator group two export note.", "target": "ops"}))
+
+        exported = json.loads(p1.handle_tool_call("scope_recall_export", {"format": "json", "scope_only": False}))
+        ids = {row["id"] for row in exported["data"]}
+        assert exported["count"] == 2
+        assert {own["id"], other["id"]} <= ids
+    finally:
+        p1.shutdown()
+        p2.shutdown()
+
+
+
 def test_governance_tool_reports_tiers_and_decay_candidates(provider):
     old = json.loads(provider.handle_tool_call("scope_recall_store", {"content": "Old temporary note for decay review.", "target": "general"}))
     durable = json.loads(provider.handle_tool_call("scope_recall_store", {"content": "Joy prefers concise replies.", "target": "user"}))
@@ -944,6 +1196,10 @@ def test_governance_tool_reports_tiers_and_decay_candidates(provider):
         conn.execute("UPDATE memories SET updated_at = ? WHERE id = ?", ("2020-01-01T00:00:00+00:00", old["id"]))
         conn.commit()
 
+    blocked = json.loads(provider.handle_tool_call("scope_recall_govern", {"dry_run": True}))
+    assert blocked["error"]
+
+    provider._config["maintenance_tools_enabled"] = True
     payload = json.loads(provider.handle_tool_call("scope_recall_govern", {"dry_run": True}))
 
     assert payload["dry_run"] is True

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scope-recall"
-version = "1.0.0"
+version = "1.0.1"
 description = "Hermes current-turn memory provider with SQLite truth storage and a LanceDB vector companion."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,7 +40,7 @@ package-dir = {"scope_recall" = "."}
 "scope_recall" = ["py.typed"]
 
 [tool.setuptools.data-files]
-"" = ["plugin.yaml", "config.json", "README.md", "DESIGN.md", "CHANGELOG.md", ".env.example"]
+"" = ["plugin.yaml", "config.json", "README.md", "DESIGN.md", "CHANGELOG.md", "CONTRIBUTING.md", ".env.example"]
 "docs" = ["docs/*.md", "SECURITY.md"]
 "scripts" = ["scripts/*.py"]
 ".github/workflows" = [".github/workflows/*.yml"]

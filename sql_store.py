@@ -170,8 +170,17 @@ def store_row(
     return memory_id, summary, now, True
 
 
-def update_row(conn: sqlite3.Connection, *, memory_id: str, content: str, target: str | None = None) -> tuple[bool, str, str]:
-    row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+def update_row(
+    conn: sqlite3.Connection,
+    *,
+    memory_id: str,
+    content: str,
+    target: str | None = None,
+    scope_id: str | None = None,
+) -> tuple[bool, str, str]:
+    where = "id = ? AND scope_id = ?" if scope_id is not None else "id = ?"
+    params: tuple[Any, ...] = (memory_id, scope_id) if scope_id is not None else (memory_id,)
+    row = conn.execute(f"SELECT * FROM memories WHERE {where}", params).fetchone()
     if row is None:
         return False, "", ""
     new_target = target or str(row["target"])
@@ -188,9 +197,9 @@ def update_row(conn: sqlite3.Connection, *, memory_id: str, content: str, target
         """
         UPDATE memories
         SET content = ?, summary = ?, target = ?, updated_at = ?, dedup_key = ?, metadata = ?
-        WHERE id = ?
+        WHERE id = ? AND scope_id = ?
         """,
-        (content, summary, new_target, updated_at, dedup_key(content), metadata_json, memory_id),
+        (content, summary, new_target, updated_at, dedup_key(content), metadata_json, memory_id, str(row["scope_id"])),
     )
     conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
     conn.execute("INSERT INTO memories_fts(memory_id, content, summary) VALUES (?, ?, ?)", (memory_id, content, summary))
@@ -198,14 +207,24 @@ def update_row(conn: sqlite3.Connection, *, memory_id: str, content: str, target
     return True, summary, updated_at
 
 
-def delete_rows(conn: sqlite3.Connection, ids: list[str]) -> int:
+def delete_rows(conn: sqlite3.Connection, ids: list[str], *, scope_id: str | None = None) -> int:
     ids = [str(memory_id) for memory_id in ids if str(memory_id).strip()]
     if not ids:
         return 0
     placeholders = ",".join("?" for _ in ids)
+    if scope_id is None:
+        scoped_ids = ids
+    else:
+        scoped_ids = [
+            str(row["id"])
+            for row in conn.execute(f"SELECT id FROM memories WHERE id IN ({placeholders}) AND scope_id = ?", [*ids, scope_id]).fetchall()
+        ]
+        if not scoped_ids:
+            return 0
+        placeholders = ",".join("?" for _ in scoped_ids)
     before = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
-    conn.execute(f"DELETE FROM memories_fts WHERE memory_id IN ({placeholders})", ids)
-    conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", ids)
+    conn.execute(f"DELETE FROM memories_fts WHERE memory_id IN ({placeholders})", scoped_ids)
+    conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", scoped_ids)
     conn.commit()
     after = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
     return max(0, before - after)

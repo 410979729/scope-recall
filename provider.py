@@ -123,6 +123,12 @@ class ScopeRecallMemoryProvider(MemoryProvider):
                 "description": "Embedding model name for the selected vector backend",
                 "default": "gemini-embedding-001",
             },
+            {
+                "key": "maintenance_tools_enabled",
+                "description": "Enable operator-only maintenance tools such as dedupe, governance, and vector repair",
+                "default": "false",
+                "choices": ["true", "false"],
+            },
         ]
 
     def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
@@ -276,18 +282,18 @@ class ScopeRecallMemoryProvider(MemoryProvider):
             return []
         if self._scope.agent_context != "primary":
             return []
-        return [
+        schemas = [
             SCOPE_RECALL_STORE_SCHEMA,
             SCOPE_RECALL_SEARCH_SCHEMA,
             SCOPE_RECALL_FORGET_SCHEMA,
             SCOPE_RECALL_UPDATE_SCHEMA,
-            SCOPE_RECALL_DEDUPE_SCHEMA,
             SCOPE_RECALL_MERGE_SCHEMA,
             SCOPE_RECALL_EXPORT_SCHEMA,
-            SCOPE_RECALL_GOVERN_SCHEMA,
-            SCOPE_RECALL_REPAIR_SCHEMA,
             SCOPE_RECALL_STATS_SCHEMA,
         ]
+        if config_bool(self._config, "maintenance_tools_enabled", False):
+            schemas.extend([SCOPE_RECALL_DEDUPE_SCHEMA, SCOPE_RECALL_GOVERN_SCHEMA, SCOPE_RECALL_REPAIR_SCHEMA])
+        return schemas
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         del kwargs
@@ -352,7 +358,7 @@ class ScopeRecallMemoryProvider(MemoryProvider):
     def _delete_memories(self, ids: list[str]) -> int:
         return delete_memories(self, ids)
 
-    def _dedupe_memories(self, *, dry_run: bool = True, scope_only: bool = False) -> dict[str, Any]:
+    def _dedupe_memories(self, *, dry_run: bool = True, scope_only: bool = True) -> dict[str, Any]:
         return dedupe_memories(self, dry_run=dry_run, scope_only=scope_only)
 
     def _repair_vector(self) -> dict[str, Any]:

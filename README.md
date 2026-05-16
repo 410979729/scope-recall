@@ -18,7 +18,7 @@ Current-turn recall · SQLite truth · LanceDB companion · Hybrid retrieval · 
 
 `scope-recall` is a Hermes local memory provider built for **current-turn recall** with strong runtime scope isolation.
 
-Version `1.0.0` is the first stable V1 release line for the documented interfaces, packaged as a public release candidate for broader field testing. The V1 compatibility contract is documented in [`docs/stability.md`](docs/stability.md).
+Version `1.0.1` is the first stable V1 release line for the documented interfaces, packaged as a public release candidate for broader field testing. The V1 compatibility contract is documented in [`docs/stability.md`](docs/stability.md).
 
 It uses a **two-layer design**:
 
@@ -124,6 +124,8 @@ Minimal default shape:
 {
   "auto_recall": true,
   "auto_capture": true,
+  "enable_tools": true,
+  "maintenance_tools_enabled": false,
   "retrieval": {
     "mode": "hybrid",
     "lexical_weight": 0.45,
@@ -385,20 +387,27 @@ This is a local deterministic governance layer, not a remote LLM extraction pipe
 
 ## Provider tools
 
-Primary-agent only:
+Primary-agent default tools:
 
 ```text
 scope_recall_store
 scope_recall_search
 scope_recall_forget
 scope_recall_update
-scope_recall_dedupe
 scope_recall_merge
 scope_recall_export
-scope_recall_govern
-scope_recall_repair
 scope_recall_stats
 ```
+
+Operator-only maintenance tools are hidden from the default schema and require `maintenance_tools_enabled=true`:
+
+```text
+scope_recall_dedupe
+scope_recall_govern
+scope_recall_repair
+```
+
+`scope_recall_export` defaults to the active runtime scope. Passing `scope_only=false` is also an operator maintenance action and fails closed unless `maintenance_tools_enabled=true`.
 
 Backward-compatible aliases are still accepted internally for old `lancepro_*` tool names during transition.
 
@@ -446,12 +455,12 @@ Example `scope_recall_stats` shape:
 | `scope_recall_store` | Store a provider-owned memory row after deterministic governance checks |
 | `scope_recall_search` | Search scoped memory with lexical/vector/hybrid retrieval |
 | `scope_recall_forget` | Delete memories matching a query or explicit id scope |
-| `scope_recall_update` | Replace the content/category of an existing memory |
-| `scope_recall_dedupe` | Inspect or collapse exact duplicate rows |
-| `scope_recall_merge` | Merge multiple memories into a target row |
-| `scope_recall_export` | Export SQLite truth rows as JSON or JSONL |
-| `scope_recall_govern` | Review tier distribution and decay/archive candidates |
-| `scope_recall_repair` | Repair/rebuild the LanceDB companion from SQLite truth |
+| `scope_recall_update` | Replace the content/category of an existing memory in the active runtime scope |
+| `scope_recall_dedupe` | Operator-only: inspect or collapse exact duplicate rows |
+| `scope_recall_merge` | Merge same-scope memories into a target row |
+| `scope_recall_export` | Export SQLite truth rows as JSON or JSONL; defaults to current scope |
+| `scope_recall_govern` | Operator-only: review tier distribution and decay/archive candidates |
+| `scope_recall_repair` | Operator-only: repair/rebuild the LanceDB companion from SQLite truth |
 | `scope_recall_stats` | Inspect storage, retrieval, scope, and vector health |
 
 ---

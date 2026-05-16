@@ -61,7 +61,7 @@ SCOPE_RECALL_UPDATE_SCHEMA = {
 
 SCOPE_RECALL_DEDUPE_SCHEMA = {
     "name": "scope_recall_dedupe",
-    "description": "Find or collapse exact duplicate Scope Recall memories.",
+    "description": "Find or collapse exact duplicate Scope Recall memories. Operator-only: requires maintenance_tools_enabled=true.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -88,7 +88,7 @@ SCOPE_RECALL_MERGE_SCHEMA = {
 
 SCOPE_RECALL_EXPORT_SCHEMA = {
     "name": "scope_recall_export",
-    "description": "Export Scope Recall SQLite truth rows as JSON or JSONL.",
+    "description": "Export SQLite truth rows as JSON or JSONL. Defaults to the current runtime scope; scope_only=false requires maintenance_tools_enabled=true.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -100,7 +100,7 @@ SCOPE_RECALL_EXPORT_SCHEMA = {
 
 SCOPE_RECALL_GOVERN_SCHEMA = {
     "name": "scope_recall_govern",
-    "description": "Run deterministic memory governance classification and decay review.",
+    "description": "Run deterministic memory governance classification and decay review. Operator-only: requires maintenance_tools_enabled=true.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -112,7 +112,7 @@ SCOPE_RECALL_GOVERN_SCHEMA = {
 
 SCOPE_RECALL_REPAIR_SCHEMA = {
     "name": "scope_recall_repair",
-    "description": "Repair/rebuild the LanceDB vector companion from SQLite truth.",
+    "description": "Repair/rebuild the LanceDB vector companion from SQLite truth. Operator-only: requires maintenance_tools_enabled=true.",
     "parameters": {"type": "object", "properties": {}},
 }
 
