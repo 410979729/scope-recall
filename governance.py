@@ -42,32 +42,100 @@ def split_sentences(text: str) -> list[str]:
     return output
 
 
-def classify_memory(text: str, target: str = "memory") -> dict[str, Any]:
+def _unique_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        clean = str(value or "").strip().lower()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        output.append(clean)
+    return output
+
+
+def _authority_for_source(source: str = "") -> str:
+    normalized = str(source or "").strip().lower()
+    if normalized == "tool-store" or normalized.startswith("tool"):
+        return "agent_tool"
+    if normalized == "turn-user":
+        return "user_turn"
+    if normalized == "turn-extracted":
+        return "rule_extracted"
+    if normalized.startswith("legacy"):
+        return "legacy_import"
+    if normalized == "builtin-curated":
+        return "curated_memory"
+    return "unknown"
+
+
+def classify_memory(text: str, target: str = "memory", source: str = "") -> dict[str, Any]:
     lowered = (text or "").lower()
+    normalized_target = str(target or "memory").strip().lower()
     category = "general"
     tier = "working"
+    kind = "semantic_fact"
+    lifecycle = "promoted"
     sensitivity = "normal"
     confidence = 0.55
     expires_at = None
-    if target == "user" or any(word in lowered for word in ("prefer", "prefers", "likes", "wants", "希望", "喜欢", "偏好")):
+    authority = _authority_for_source(source)
+
+    if normalized_target == "general":
+        category = "general"
+        tier = "working"
+        kind = "raw_observation"
+        lifecycle = "scratch"
+        confidence = 0.5
+    elif normalized_target == "user" or any(word in lowered for word in ("prefer", "prefers", "likes", "wants", "希望", "喜欢", "偏好")):
         category = "preference"
         tier = "core"
+        kind = "user_preference"
         confidence = 0.86
-    elif target == "ops" or any(word in lowered for word in ("deploy", "rollout", "restart", "gateway", "command", "production", "prod")):
+    elif normalized_target == "ops" or any(word in lowered for word in ("deploy", "rollout", "restart", "gateway", "command", "production", "prod")):
         category = "procedure"
         tier = "core"
+        kind = "ops_procedure"
         confidence = 0.8
-    elif target == "project":
+    elif normalized_target == "project":
         category = "project"
         tier = "core"
+        kind = "project_fact"
         confidence = 0.78
+    elif normalized_target == "memory":
+        category = "fact"
+        tier = "core"
+        kind = "environment_fact"
+        confidence = 0.72
+
     if any(word in lowered for word in ("temporary", "temp", "one-off", "scratch", "临时", "一次性")):
         tier = "working"
+        if normalized_target == "general":
+            kind = "raw_observation"
+            lifecycle = "scratch"
+        else:
+            kind = "temporary_state"
+            lifecycle = "candidate"
         expires_at = "stale-review"
         confidence = min(confidence, 0.62)
     if any(word in lowered for word in ("token", "password", "secret", "api key", "apikey")):
         sensitivity = "sensitive"
-    return {"category": category, "tier": tier, "confidence": confidence, "sensitivity": sensitivity, "expires_at": expires_at}
+
+    tags = _unique_strings([f"target:{normalized_target}", f"kind:{kind}", f"source:{source or 'unknown'}"])
+    scope_mode = "local" if normalized_target == "general" else "shared"
+    return {
+        "category": category,
+        "tier": tier,
+        "kind": kind,
+        "lifecycle": lifecycle,
+        "authority": authority,
+        "confidence": confidence,
+        "sensitivity": sensitivity,
+        "expires_at": expires_at,
+        "entities": [],
+        "tags": tags,
+        "scope_mode": scope_mode,
+    }
 
 
 def extract_candidates(text: str) -> list[ExtractionCandidate]:

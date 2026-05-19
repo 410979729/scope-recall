@@ -183,10 +183,31 @@ def store_row(
             conn.commit()
             return str(existing["id"]), str(existing["summary"]), now, False
 
-    metadata_payload = dict(classify_memory(content, target))
+    metadata_payload = dict(classify_memory(content, target, source))
     if metadata:
         try:
-            metadata_payload.update(json.loads(metadata))
+            user_metadata = json.loads(metadata)
+            if isinstance(user_metadata, dict):
+                for meta_key, value in user_metadata.items():
+                    if meta_key in {"entities", "tags"}:
+                        current_value = metadata_payload.get(meta_key)
+                        base_values = current_value if isinstance(current_value, list) else []
+                        incoming_values = value if isinstance(value, list) else [value]
+                        metadata_payload[meta_key] = sorted(
+                            {
+                                str(item).strip().lower()
+                                for item in [*base_values, *incoming_values]
+                                if str(item).strip()
+                            }
+                        )
+                    elif meta_key in {"kind", "lifecycle", "authority", "confidence", "sensitivity", "expires_at", "category", "tier"}:
+                        # Classification fields are provider-owned so old/loose callers cannot
+                        # silently weaken the governance contract.
+                        continue
+                    else:
+                        metadata_payload[meta_key] = value
+            else:
+                metadata_payload["raw_metadata"] = str(metadata)
         except Exception:
             metadata_payload["raw_metadata"] = str(metadata)
     metadata_json = json.dumps(metadata_payload, ensure_ascii=False, sort_keys=True)
