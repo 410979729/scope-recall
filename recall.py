@@ -67,6 +67,7 @@ class RecallService:
         results = list(merged.values())
         results = self._apply_general_policy(results)
         min_score = float(retrieval_cfg.get("min_score") or self.provider._config_value("min_score", 0.18))
+        vector_only_min_score = float(retrieval_cfg.get("vector_only_min_score") or max(0.45, min_score * 2.0))
         filtered: list[RecallItem] = []
         for item in results:
             meta = dict(item.metadata or {})
@@ -74,6 +75,10 @@ class RecallService:
             meta["base_score"] = base_score
             item.metadata = meta
             item.score = base_score
+            lexical_score = float(meta.get("lexical_score") or 0.0)
+            vector_score = float(meta.get("vector_score") or 0.0)
+            if lexical_score <= 0.0 and vector_score > 0.0 and base_score < vector_only_min_score:
+                continue
             if base_score >= min_score:
                 filtered.append(item)
 

@@ -6,13 +6,17 @@ from scope_recall.scoring import lexical_score
 
 
 class DummyProvider:
-    def __init__(self, retrieval_config):
+    def __init__(self, retrieval_config, *, db_items=None, vector_items=None):
         self._retrieval_config = dict(retrieval_config)
         self._scope_id = "local-scope"
         self._shared_scope_id = "shared-scope"
         self._accessible_scope_ids = [self._scope_id, self._shared_scope_id]
+        self._db_items = db_items
+        self._vector_items = list(vector_items or [])
 
     def _search_db_memories(self, query, *, limit):
+        if self._db_items is not None:
+            return self._db_items[:limit]
         return [
             RecallItem(
                 id="general-1",
@@ -37,7 +41,7 @@ class DummyProvider:
         ]
 
     def _search_vector_memories(self, query, *, limit):
-        return []
+        return self._vector_items[:limit]
 
     def _search_curated_memories(self, query):
         return []
@@ -91,3 +95,47 @@ def test_include_general_always_allows_general_debug_mode():
     results = RecallService(provider).search_memories("deploy command", limit=5)
 
     assert {item.target for item in results} == {"memory", "general"}
+
+def test_hybrid_vector_only_match_suppresses_low_confidence_unrelated_ops_row():
+    vector_item = RecallItem(
+        id="ops-openclaw",
+        content="OpenClaw sibling upgrade pitfall for 天璇 and 天权.",
+        summary="OpenClaw sibling upgrade pitfall for 天璇 and 天权.",
+        source="tool-store",
+        target="ops",
+        score=0.34,
+        updated_at="2026-05-01T00:00:00+00:00",
+        metadata={"lexical_score": 0.0, "vector_score": 0.34, "scope_id": "shared-scope"},
+    )
+    provider = DummyProvider(
+        {"mode": "hybrid", "include_general": "same-scope", "general_weight": 0.35, "min_score": 0.18},
+        db_items=[],
+        vector_items=[vector_item],
+    )
+
+    results = RecallService(provider).search_memories("普通无关对话测试：今天午饭吃什么比较好", limit=5)
+
+    assert results == []
+
+
+def test_hybrid_vector_only_match_keeps_high_confidence_semantic_hit():
+    vector_item = RecallItem(
+        id="memory-scope-recall",
+        content="Scope Recall uses SQLite truth storage and LanceDB semantic companion.",
+        summary="Scope Recall architecture: SQLite truth + LanceDB semantic companion.",
+        source="tool-store",
+        target="memory",
+        score=0.78,
+        updated_at="2026-05-01T00:00:00+00:00",
+        metadata={"lexical_score": 0.0, "vector_score": 0.78, "scope_id": "shared-scope"},
+    )
+    provider = DummyProvider(
+        {"mode": "hybrid", "include_general": "same-scope", "general_weight": 0.35, "min_score": 0.18},
+        db_items=[],
+        vector_items=[vector_item],
+    )
+
+    results = RecallService(provider).search_memories("memory architecture database storage", limit=5)
+
+    assert [item.id for item in results] == ["memory-scope-recall"]
+

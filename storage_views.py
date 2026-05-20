@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from .gating import build_fts_query, compact_text, like_terms, query_tokens
+from .gating import build_fts_query, compact_text, like_terms, normalized_token_set, query_tokens
 from .models import RecallItem
 from .scoring import lexical_score
 from .sql_store import curated_recall_item_id, iter_curated_entries
@@ -16,6 +16,40 @@ def _scope_placeholders(provider: Any) -> str:
 
 def _accessible_scope_params(provider: Any) -> list[str]:
     return [str(scope_id) for scope_id in provider._accessible_scope_ids]
+
+
+def _alias_like_terms(query: str, tokens: list[str]) -> list[str]:
+    """Return alias-expanded LIKE terms that are not already in the raw query.
+
+    This preserves lexical-only recall for curated aliases such as response→reply
+    after removing the unsafe arbitrary-recency backfill. We include both the
+    canonical alias and known surface forms because SQLite LIKE is not aware of
+    our stemming/alias map (e.g. response→reply must still discover rows that
+    literally contain "replies").
+    """
+    raw_terms = set(tokens)
+    raw_query = (query or "").lower()
+    # Importing here keeps this module's SQL discovery policy in sync with
+    # lexical scoring without broad recent-row scans.
+    from .aliases import _ALIAS_MAP, canonicalize_alias  # type: ignore[attr-defined]
+
+    canonical_to_terms: dict[str, list[str]] = {}
+    for raw in normalized_token_set(tokens):
+        canonical_to_terms.setdefault(canonicalize_alias(raw), [])
+    for surface, canonical in _ALIAS_MAP.items():
+        if canonical in canonical_to_terms:
+            canonical_to_terms.setdefault(canonical, []).append(surface)
+    terms: list[str] = []
+    seen: set[str] = set()
+    for canonical, surfaces in canonical_to_terms.items():
+        for term in [canonical, *surfaces]:
+            if not term or term in raw_terms or term in raw_query or term in seen:
+                continue
+            seen.add(term)
+            terms.append(term)
+            if len(terms) >= 12:
+                return terms
+    return terms
 
 
 def search_db_memories(provider: Any, query: str, *, limit: int) -> list[RecallItem]:
@@ -64,19 +98,32 @@ def search_db_memories(provider: Any, query: str, *, limit: int) -> list[RecallI
                     params,
                 ).fetchall()
             )
-        if len(rows) < candidate_pool:
+        alias_terms = _alias_like_terms(query, tokens)
+        if alias_terms:
+            clause = " OR ".join(["content LIKE ?", "summary LIKE ?"] * len(alias_terms))
+            params = []
+            for term in alias_terms:
+                needle = f"%{term}%"
+                params.extend([needle, needle])
+            params.extend([*_accessible_scope_params(provider), candidate_pool])
             rows.extend(
                 conn.execute(
-                    """
+                    f"""
                     SELECT *
                     FROM memories
-                    WHERE scope_id IN ({})
+                    WHERE ({clause}) AND scope_id IN ({_scope_placeholders(provider)})
                     ORDER BY updated_at DESC
                     LIMIT ?
-                    """.format(_scope_placeholders(provider)),
-                    [*_accessible_scope_params(provider), recent_scan_limit],
+                    """,
+                    params,
                 ).fetchall()
             )
+        # Do not backfill retrieval with arbitrary recent memories.
+        # Earlier versions scanned newest rows when lexical LIKE/FTS returned too
+        # few candidates, then accepted durable/tool rows on source/target bonus
+        # alone. That made unrelated fresh conversations recall stale ops notes
+        # (for example OpenClaw/凌晨 task context) despite zero token overlap.
+        # Recency is only a reranking bonus after relevance is established.
 
     dedup_rows: dict[str, sqlite3.Row] = {row["id"]: row for row in rows}
     min_score = float((provider._retrieval_config or {}).get("min_score") or provider._config_value("min_score", 0.18))

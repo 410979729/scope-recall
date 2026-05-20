@@ -38,10 +38,22 @@
     "candidate_pool": 12,
     "min_score": 0.18,
     "vector_min_score": 0.12,
+    "vector_only_min_score": 0.45,
     "include_general": "same-scope",
     "general_weight": 0.35,
     "metric": "cosine",
-    "freshness_hints": ["current", "currently", "latest", "new", "newest", "now", "recent", "recently", "today", "updated"],
+    "freshness_hints": [
+      "current",
+      "currently",
+      "latest",
+      "new",
+      "newest",
+      "now",
+      "recent",
+      "recently",
+      "today",
+      "updated"
+    ],
     "freshness_base_weight": 0.22,
     "freshness_step_weight": 0.1,
     "freshness_max_weight": 0.42
