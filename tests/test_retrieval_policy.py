@@ -103,9 +103,9 @@ def test_hybrid_vector_only_match_suppresses_low_confidence_unrelated_ops_row():
         summary="OpenClaw sibling upgrade pitfall for 天璇 and 天权.",
         source="tool-store",
         target="ops",
-        score=0.34,
+        score=0.59,
         updated_at="2026-05-01T00:00:00+00:00",
-        metadata={"lexical_score": 0.0, "vector_score": 0.34, "scope_id": "shared-scope"},
+        metadata={"lexical_score": 0.0, "vector_score": 0.59, "scope_id": "shared-scope"},
     )
     provider = DummyProvider(
         {"mode": "hybrid", "include_general": "same-scope", "general_weight": 0.35, "min_score": 0.18},

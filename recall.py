@@ -67,7 +67,11 @@ class RecallService:
         results = list(merged.values())
         results = self._apply_general_policy(results)
         min_score = float(retrieval_cfg.get("min_score") or self.provider._config_value("min_score", 0.18))
-        vector_only_min_score = float(retrieval_cfg.get("vector_only_min_score") or max(0.45, min_score * 2.0))
+        # Vector-only matches have no lexical evidence, so they must clear a
+        # substantially higher bar than the broad vector candidate threshold.
+        # This keeps the semantic companion useful for strong hits while
+        # preventing mid-confidence neighbor drift from injecting stale topics.
+        vector_only_min_score = float(retrieval_cfg.get("vector_only_min_score") or 0.68)
         filtered: list[RecallItem] = []
         for item in results:
             meta = dict(item.metadata or {})
