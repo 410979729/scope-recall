@@ -45,6 +45,31 @@ def test_context_compaction_active_task_payload_is_rejected():
     assert "Active Task" in result.reason
 
 
+def test_gateway_interruption_system_note_is_rejected():
+    result = should_capture_text(
+        "[System note: Your previous turn was interrupted before you could process the last tool result(s). "
+        "The conversation history contains tool outputs you haven't responded to yet. Please finish processing those results "
+        "and summarize what was accomplished, then address the user's new message below.]\n\n查看凌晨2：40左右的聊天记录"
+    )
+
+    assert result.allowed is False
+    assert "System note" in result.reason
+
+
+def test_generic_system_note_wrapper_is_rejected():
+    result = should_capture_text("[System note: gateway recovered the prior turn and restored tool outputs.]\n\nContinue normally.")
+
+    assert result.allowed is False
+    assert "System note" in result.reason
+
+
+def test_preserved_active_task_list_wrapper_is_rejected():
+    result = should_capture_text("[Your active task list was preserved across context compression]\n- [>] diagnose bug")
+
+    assert result.allowed is False
+    assert "active task list" in result.reason
+
+
 def test_ordinary_memory_fact_is_allowed():
     result = should_capture_text("Joy prefers read-only SQLite viewers for inspecting live memory databases.")
 
