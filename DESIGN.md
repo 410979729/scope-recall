@@ -272,6 +272,19 @@ If LanceDB delete/upsert fails, SQLite remains authoritative and the provider ma
 
 Full rebuild is no longer the default init path. For deep maintenance or release-grade storage hygiene, run `scripts/repair.vector_index.py` to rebuild the LanceDB companion from SQLite truth with an automatic backup.
 
+### Nightly digest consolidation
+
+`scripts/nightly-digest.py` is the plugin-owned batch path for daily consolidation. It reads the active Hermes `state.db` first and falls back to legacy `lcm.db`, groups user/assistant/tool metadata by session, and scans the selected local day by timestamps instead of trusting only session-id date prefixes.
+
+The digest does not store raw `system` rows or raw `tool` output. Task-like sessions keep only sanitized tool-chain evidence: tool names, safe command hints, verification hints, and a compact workflow summary. Candidate memories are checked against existing accessible durable rows before writing:
+
+- exact or strongly covered candidate: skip
+- semantically related but less complete existing row: update/merge
+- new durable fact/workflow/summary: insert
+- exact duplicate groups found after the run: delete duplicates through the same scoped delete path
+
+Actual writes use SQLite truth, FTS/entity sync, digest run/source ledger tables, and LanceDB upsert when the vector companion is enabled. Dry-run mode plans the same decisions without writing provider memory.
+
 ### Operational follow-up outside source readiness
 
 Source-tree readiness and public documentation are separate from live deployment. Operators still need to:
@@ -310,7 +323,7 @@ Subagents do not get tool schemas and cannot use them.
 
 For V1 release/publish, keep these gates green:
 
-1. package and plugin metadata stay on `1.0.4` until the next patch release
+1. package and plugin metadata stay on `1.0.5` until the next patch release
 2. public maturity wording remains beta / release-candidate until broader field testing justifies a production-stable classifier
 3. README, DESIGN, CHANGELOG, stability contract, migration docs, and upstream-difference docs stay in sync
 4. local release gate passes with `python scripts/check.release.py`

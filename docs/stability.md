@@ -1,6 +1,6 @@
 # Scope Recall V1 stability contract
 
-`scope-recall` 1.0.3 is the structured-governance and embedding-credential isolation patch release for the Hermes Scope Recall memory provider V1 line.
+`scope-recall` 1.0.5 is the nightly-digest consolidation patch release for the Hermes Scope Recall memory provider V1 line.
 
 This document defines what V1 commits to keep stable, what may evolve in minor releases, and what remains explicitly outside the V1 compatibility promise.
 
@@ -36,6 +36,7 @@ Stable V1 guarantees:
 - the LanceDB directory is a rebuildable companion index, not the source of truth
 - losing or rebuilding `$HERMES_HOME/scope-recall/lancedb/` must not delete SQLite truth rows
 - vector repair may rebuild LanceDB from SQLite truth
+- nightly digest writes are still SQLite truth rows; the digest run/source ledger is audit metadata, not a separate memory authority
 
 Schema evolution policy:
 
@@ -59,6 +60,7 @@ V1 keeps these behavior boundaries stable:
 - durable `user`/`memory`/`project`/`ops` rows are shared across windows/chats for the same platform + agent workspace + agent identity + user id
 - `general` scratch rows remain local to the current chat/thread or gateway session key
 - scoped tool actions operate on the current accessible scope set: local runtime scope plus shared durable scope
+- `scripts/nightly-digest.py` may add or update durable rows, but it must not store raw `system` rows or raw `tool` output; task workflows are stored only as sanitized summaries with optional tool-name and verification metadata
 
 ## Stable V1 tool surface
 

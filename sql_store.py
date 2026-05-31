@@ -313,10 +313,17 @@ def delete_rows(
     conn.execute(f"DELETE FROM memories_fts WHERE memory_id IN ({placeholders})", scoped_ids)
     conn.execute(f"DELETE FROM memory_entities WHERE memory_id IN ({placeholders})", scoped_ids)
     conn.execute(f"DELETE FROM memory_feedback WHERE memory_id IN ({placeholders})", scoped_ids)
+    if _table_exists(conn, "memory_digest_sources"):
+        conn.execute(f"DELETE FROM memory_digest_sources WHERE memory_id IN ({placeholders})", scoped_ids)
     conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", scoped_ids)
     conn.commit()
     after = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
     return max(0, before - after)
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1", (table,)).fetchone()
+    return row is not None
 
 
 def exact_duplicate_groups(

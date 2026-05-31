@@ -20,7 +20,20 @@ _DEPLOY_RE = re.compile(
 )
 _IDENTITY_RE = re.compile(r"\b(?P<subject>[A-Z][\w-]*)\s+is\s+(?P<object>[^.!?。！？]+)", re.IGNORECASE)
 _NEGATION_RE = re.compile(r"\b(no longer|not|never|不再|不要|不是|取消|avoid|stop)\b", re.IGNORECASE)
-_MEMORY_TYPES = {"factual", "preference", "procedure", "project", "episodic", "resource", "constraint"}
+_MEMORY_TYPES = {
+    "factual",
+    "preference",
+    "procedure",
+    "workflow",
+    "tool_trace",
+    "project",
+    "summary",
+    "pitfall",
+    "decision",
+    "episodic",
+    "resource",
+    "constraint",
+}
 
 
 @dataclass
@@ -80,9 +93,11 @@ def normalize_memory_type(value: Any, fallback: str = "factual") -> str:
         "pref": "preference",
         "ops": "procedure",
         "process": "procedure",
-        "workflow": "procedure",
         "scratch": "episodic",
         "observation": "episodic",
+        "trace": "tool_trace",
+        "lesson": "pitfall",
+        "decide": "decision",
         "doc": "resource",
         "document": "resource",
         "rule": "constraint",

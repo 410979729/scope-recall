@@ -18,7 +18,7 @@ Current-turn recall · Permanent shared memory · Local scratch scopes · SQLite
 
 `scope-recall` is a Hermes local memory provider built for **current-turn recall** and **permanent semantic memory**. Durable user/project/ops/memory facts are shared across windows/chats for the same user + agent identity; raw general turn captures stay local to the current chat/thread/session.
 
-Version `1.0.4` is the local graph, context, and feedback release for the documented V1 interfaces, packaged as a public release candidate for broader field testing. It keeps the V1 compatibility contract in [`docs/stability.md`](docs/stability.md) while adding SQLite-backed entity indexes, type/importance metadata, trust feedback, and compact context/probe tools on top of the existing structured-governance layer.
+Version `1.0.5` is the nightly digest release for the documented V1 interfaces, packaged as a public release candidate for broader field testing. It keeps the V1 compatibility contract in [`docs/stability.md`](docs/stability.md) while adding a profile-scoped daily conversation digest that can promote task workflows, tool-chain summaries, and important daily facts into SQLite truth without storing raw system/tool output.
 
 It uses a **two-layer design**:
 
@@ -297,7 +297,9 @@ hybrid scoring + recency-aware ranking + bounded prompt block
 | `tooling.py` | Provider tool dispatch |
 | `schemas.py` | Hermes tool schemas |
 | `migration.py` | Legacy `lancepro` migration helpers |
+| `nightly_digest.py` | Daily conversation digest pipeline, LLM/heuristic extraction, semantic write decisions |
 | `scripts/import.openclaw.memory_lancedb_pro.py` | Explicit OpenClaw history importer |
+| `scripts/nightly-digest.py` | CLI wrapper for the profile-scoped daily digest |
 | `scripts/repair.vector_index.py` | Rebuild/repair LanceDB from SQLite truth |
 | `scripts/check.release.py` | Full V1 release gate used locally and by CI |
 
@@ -363,6 +365,18 @@ Runtime fallback remains available:
 - they can be recalled from another chat/window when the new query is semantically relevant
 - `general` rows remain local scratch context for the current chat/thread/session
 - ID-based updates/deletes/merges are restricted to the current accessible scope set, not global row ids
+
+### Nightly conversation digest
+
+`scripts/nightly-digest.py` is a plugin-owned batch path for daily memory consolidation. It reads the profile's active Hermes `state.db` first, falls back to legacy `lcm.db`, and scans the selected local date by message timestamps. Raw `system` rows and raw `tool` outputs are not stored. For task sessions, the digest keeps a sanitized tool-chain summary so repeated engineering workflows can be recalled later as `workflow` memory.
+
+Typical smoke run:
+
+```bash
+python scripts/nightly-digest.py --hermes-home "$HERMES_HOME" --date 2026-06-01 --dry-run --extractor heuristic --verbose
+```
+
+Production runs default to the LLM extractor. The script reads model/base URL/API key information from the Hermes profile config and `.env`, with `SCOPE_RECALL_DIGEST_API_KEY` available as an explicit override. Actual writes use SQLite truth rows, FTS/entity sync, digest run/source ledgers, semantic skip/update/insert decisions, exact duplicate cleanup, and LanceDB companion upsert when vector indexing is enabled.
 
 ### Hybrid retrieval
 
