@@ -345,9 +345,9 @@ What is already real now:
 - stats distinguish vector physical rows, unique ids, and duplicate extra rows
 - SQLite graph and feedback indexes exist for entity probe/related lookup, compact context rendering, and trust feedback
 - top-level package import is lightweight enough for clean wheel/venv checks without Hermes runtime modules
-- release automation runs the full `scripts/check.release.py` gate in CI
+- CI runs the full `scripts/check.release.py` gate
 
 What remains outside source-tree readiness:
 
 - live Hermes gateway freshness still requires a restart/reload plus runtime smoke verification after deployment
-- publishing a new release requires pushing a clean commit, waiting for remote CI, and creating or updating the appropriate next version tag/release according to the existing version line
+- publishing a new release requires pushing a clean commit, waiting for remote CI, and creating or updating the appropriate next version tag; tag pushes and manual release workflow dispatches create the GitHub Release from the matching changelog entry

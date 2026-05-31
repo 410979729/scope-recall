@@ -4,6 +4,10 @@ All notable changes to `scope-recall` will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Synced public README/stability/OpenClaw comparison wording with the v1.0.4/v1.0.5 entity, feedback, and nightly digest features.
+- Extended the public `scope_recall_store` tool schema `memory_type` enum to include workflow-oriented digest types already accepted by the governance layer.
+
 ## [1.0.5] - 2026-06-01
 
 ### Added

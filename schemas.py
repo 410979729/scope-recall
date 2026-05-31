@@ -13,7 +13,20 @@ SCOPE_RECALL_STORE_SCHEMA = {
             "memory_type": {
                 "type": "string",
                 "description": "Optional semantic type used for governance and ranking.",
-                "enum": ["factual", "preference", "procedure", "project", "episodic", "resource", "constraint"],
+                "enum": [
+                    "factual",
+                    "preference",
+                    "procedure",
+                    "workflow",
+                    "tool_trace",
+                    "project",
+                    "summary",
+                    "pitfall",
+                    "decision",
+                    "episodic",
+                    "resource",
+                    "constraint",
+                ],
             },
             "importance": {
                 "type": "number",

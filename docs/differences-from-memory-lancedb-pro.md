@@ -75,7 +75,9 @@ OpenClaw history reuse is treated as an **explicit import problem**, not transpa
 - conservative semantic near-duplicate merge for `user`, `ops`, and `project` memories
 - conflict preservation when near-duplicate memories contain negation / supersession language
 - rules-based smart extraction from user turns into preference / ops / project fact candidates
+- nightly digest batch extraction with LLM or heuristic candidates for daily durable/workflow consolidation
 - metadata classification for category, tier, confidence, sensitivity, and expiry review
+- entity probe/related/context tools and trust feedback ranking
 - `scope_recall_forget`
 - `scope_recall_update`
 - `scope_recall_dedupe`
@@ -87,7 +89,7 @@ OpenClaw history reuse is treated as an **explicit import problem**, not transpa
 
 It still does not claim full OpenClaw `memory-lancedb-pro` parity. The remaining differences are:
 
-- extraction / merge is deterministic and conservative, not an LLM-backed created/merged/skipped classifier
+- ordinary write-time extraction / merge is deterministic and conservative; the LLM path is a nightly batch digest, not an always-on created/merged/skipped governance classifier
 - semantic merge is score/rule-based, not a general contradiction resolver
 - tier governance currently classifies and reports decay/archive candidates, but does not run a full summarization / promotion / compression pipeline
 - no automatic reuse of old OpenClaw LanceDB stores without explicit transformation
@@ -96,7 +98,7 @@ It still does not claim full OpenClaw `memory-lancedb-pro` parity. The remaining
 
 The correct way to describe `scope-recall` today is:
 
-> A Hermes local memory provider for current-turn recall with SQLite truth storage, LanceDB vector companion retrieval, strong runtime scope isolation, deterministic write-time governance, and explicit migration boundaries.
+> A Hermes local memory provider for current-turn recall with SQLite truth storage, LanceDB vector companion retrieval, strong runtime scope isolation, deterministic write-time governance, nightly digest consolidation, and explicit migration boundaries.
 
 It should **not** be described as:
 

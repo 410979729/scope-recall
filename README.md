@@ -2,11 +2,11 @@
 
 <div align="center">
 
-**Hermes current-turn memory provider with permanent semantic recall, SQLite truth storage, and a LanceDB vector companion**
+**Hermes current-turn memory provider with permanent semantic recall, nightly workflow digest, SQLite truth storage, and a LanceDB vector companion**
 
 *Give Hermes durable memory that can follow the same user across windows/chats while keeping local scratch context from bleeding into the wrong place.*
 
-Current-turn recall · Permanent shared memory · Local scratch scopes · SQLite truth · LanceDB companion · Hybrid retrieval
+Current-turn recall · Permanent shared memory · Nightly workflow digest · Local scratch scopes · SQLite truth · LanceDB companion · Hybrid retrieval
 
 [![CI](https://github.com/410979729/scope-recall/actions/workflows/ci.yml/badge.svg)](https://github.com/410979729/scope-recall/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -83,6 +83,7 @@ Most agent memory pain is not just "wrong memory was recalled". The bigger user-
 | Storage authority | SQLite is the durable truth; LanceDB is rebuildable companion state |
 | Hybrid retrieval | SQLite lexical/FTS candidates + LanceDB semantic candidates + bounded prompt rendering |
 | Entity/context layer | SQLite entity index, entity probe/related tools, compact query context, trust feedback |
+| Nightly digest | Profile-scoped daily consolidation for durable facts, workflow summaries, and sanitized tool-chain evidence |
 | Memory scope model | shared durable scope for user/project/ops/memory facts; local scope for general scratch captures |
 | Built-in memory integration | Hermes curated `USER.md` / `MEMORY.md` are live-read, not mirrored into SQLite. In gateway contexts with an explicit `user_id`, curated-file recall is opt-in/allowlisted to avoid cross-user leakage from global profile files. |
 | Governance | deterministic exact dedupe, conservative near-duplicate merge, filtering, metadata, decay review |
@@ -376,7 +377,7 @@ Typical smoke run:
 python scripts/nightly-digest.py --hermes-home "$HERMES_HOME" --date 2026-06-01 --dry-run --extractor heuristic --verbose
 ```
 
-Production runs default to the LLM extractor. The script reads model/base URL/API key information from the Hermes profile config and `.env`, with `SCOPE_RECALL_DIGEST_API_KEY` available as an explicit override. Actual writes use SQLite truth rows, FTS/entity sync, digest run/source ledgers, semantic skip/update/insert decisions, exact duplicate cleanup, and LanceDB companion upsert when vector indexing is enabled.
+Production runs default to the LLM extractor. The script reads model/base URL/API key information from the Hermes profile config and `.env`, with `SCOPE_RECALL_DIGEST_API_KEY` available as an explicit override. If the LLM path returns no usable candidates for a session, the digest falls back to heuristic candidates for that session. Actual writes use SQLite truth rows, FTS/entity sync, digest run/source ledgers, semantic skip/update/insert decisions, exact duplicate cleanup, and LanceDB companion upsert when vector indexing is enabled.
 
 ### Hybrid retrieval
 
@@ -426,7 +427,7 @@ SQLite is the cardinality authority. During vector sync, the provider compares S
 - `vector.duplicate_row_count` — extra physical rows beyond one row per id
 - `vector.status` — `ready`, `degraded`, `needs_repair`, `disabled`, or `error`
 
-A healthy synced companion should have `total_memories == vector.unique_id_count == vector.row_count` and `vector.duplicate_row_count == 0` for provider-owned rows.
+When `vector.index_general=false` (the default), local `general` scratch rows are not expected in LanceDB. A healthy synced companion should have `vector.unique_id_count == vector.row_count`, `vector.duplicate_row_count == 0`, and vector ids matching the configured vector-indexed provider rows.
 
 For deeper maintenance:
 
@@ -461,6 +462,10 @@ Primary-agent default tools:
 ```text
 scope_recall_store
 scope_recall_search
+scope_recall_context
+scope_recall_probe
+scope_recall_related
+scope_recall_feedback
 scope_recall_forget
 scope_recall_update
 scope_recall_merge
@@ -536,6 +541,10 @@ Example `scope_recall_stats` shape:
 | --- | --- |
 | `scope_recall_store` | Store a provider-owned memory row after deterministic governance checks |
 | `scope_recall_search` | Search the current local scratch scope plus shared durable scope with lexical/vector/hybrid retrieval |
+| `scope_recall_context` | Render a compact task-relevant memory context block plus structured evidence for a query |
+| `scope_recall_probe` | Inspect accessible memories attached to a specific entity |
+| `scope_recall_related` | List entities that co-occur with a given entity in accessible memories |
+| `scope_recall_feedback` | Mark a memory as helpful or unhelpful so trust scoring can adjust future recall |
 | `scope_recall_forget` | Delete memories matching a query within the current accessible scope set |
 | `scope_recall_update` | Replace content/category within the current accessible scope set; shared/local target-mode changes are rejected |
 | `scope_recall_dedupe` | Operator-only: inspect or collapse exact duplicate rows |
@@ -635,7 +644,7 @@ Release checks prove the source tree and artifact. They do not prove a running H
 
 - vector sync is incremental by stable row id / `updated_at`, with duplicate-id/stale-row repair during normal sync; `scripts/repair.vector_index.py` can rebuild the LanceDB companion from SQLite truth when deeper storage hygiene is needed
 - semantic merge is intentionally conservative and rules/scoring-based; it is not a general-purpose contradiction resolver or LLM reasoning layer
-- smart extraction is rules-based for common preference / ops / project-fact sentences; it is not full OpenClaw-style LLM created/merged/skipped extraction parity
+- write-time smart extraction is rules-based for common preference / ops / project-fact sentences; nightly digest adds a separate LLM/heuristic batch consolidation path, but it is not full OpenClaw-style always-on created/merged/skipped lifecycle parity
 - fallback `local-hash` is only a degraded offline path, not a true semantic model
 - old `lancepro` directory still exists as a compatibility shim during the V1 transition window
 - the supported Hermes install shape is still an unpacked plugin directory; the wheel is verified as a package artifact, not as a Hermes discovery mechanism
@@ -667,6 +676,8 @@ python scripts/check.release.py
 python scripts/repair.vector_index.py --hermes-home "$HERMES_HOME" --dry-run
 ```
 
+Release publishing is tag-driven: `.github/workflows/release.yml` can create a GitHub Release for a `v*` tag and populate notes from the matching `CHANGELOG.md` entry.
+
 `scripts/check.release.py` verifies:
 
 - V1 metadata and stable public docs
@@ -696,9 +707,10 @@ Current focused regression coverage includes:
 - capture filtering blocks known maintenance prompts, trivial replies, obvious secret-bearing text, and overlong prompt blocks
 - semantic near-duplicate merge and conflict preservation
 - rules-based smart extraction from user turns into preference / ops / project fact memories
+- nightly digest session loading, redaction, workflow memory writes, ledgers, duplicate skips, and dry-run behavior
 - merge / export / govern provider tools
 - governance metadata classification and decay review candidates
-- provider tools cover store/search/forget/update/dedupe/merge/export/govern/repair/stats
+- provider tools cover store/search/context/probe/related/feedback/forget/update/dedupe/merge/export/govern/repair/stats
 - explicit vector companion rebuild from SQLite truth via `scripts/repair.vector_index.py`
 - `scope_recall_stats` exposes physical rows, unique ids, and duplicate-row count
 - top-level `import scope_recall` stays light without Hermes runtime modules

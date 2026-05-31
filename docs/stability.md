@@ -68,6 +68,10 @@ The following tool names are stable for V1:
 
 - `scope_recall_store`
 - `scope_recall_search`
+- `scope_recall_context`
+- `scope_recall_probe`
+- `scope_recall_related`
+- `scope_recall_feedback`
 - `scope_recall_forget`
 - `scope_recall_update`
 - `scope_recall_dedupe`
