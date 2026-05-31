@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from .gating import compact_text, dedup_key
-from .governance import classify_memory
+from .governance import classify_memory, merge_metadata
+from .graph import backfill_memory_entities, ensure_graph_schema, sync_memory_entities
 
 ENTRY_DELIMITER = "\n§\n"
 
@@ -45,7 +46,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
     ensure_memory_columns(conn)
+    ensure_graph_schema(conn)
     rebuild_fts_if_empty(conn)
+    backfill_memory_entities(conn)
     conn.commit()
 
 
@@ -183,33 +186,7 @@ def store_row(
             conn.commit()
             return str(existing["id"]), str(existing["summary"]), now, False
 
-    metadata_payload = dict(classify_memory(content, target, source))
-    if metadata:
-        try:
-            user_metadata = json.loads(metadata)
-            if isinstance(user_metadata, dict):
-                for meta_key, value in user_metadata.items():
-                    if meta_key in {"entities", "tags"}:
-                        current_value = metadata_payload.get(meta_key)
-                        base_values = current_value if isinstance(current_value, list) else []
-                        incoming_values = value if isinstance(value, list) else [value]
-                        metadata_payload[meta_key] = sorted(
-                            {
-                                str(item).strip().lower()
-                                for item in [*base_values, *incoming_values]
-                                if str(item).strip()
-                            }
-                        )
-                    elif meta_key in {"kind", "lifecycle", "authority", "confidence", "sensitivity", "expires_at", "category", "tier"}:
-                        # Classification fields are provider-owned so old/loose callers cannot
-                        # silently weaken the governance contract.
-                        continue
-                    else:
-                        metadata_payload[meta_key] = value
-            else:
-                metadata_payload["raw_metadata"] = str(metadata)
-        except Exception:
-            metadata_payload["raw_metadata"] = str(metadata)
+    metadata_payload = merge_metadata(dict(classify_memory(content, target, source)), metadata)
     metadata_json = json.dumps(metadata_payload, ensure_ascii=False, sort_keys=True)
 
     conn.execute(
@@ -246,6 +223,7 @@ def store_row(
         "INSERT INTO memories_fts(memory_id, content, summary) VALUES (?, ?, ?)",
         (memory_id, content, summary),
     )
+    sync_memory_entities(conn, memory_id=memory_id, content=content, target=target, metadata=metadata_payload)
     conn.commit()
     return memory_id, summary, now, True
 
@@ -282,7 +260,7 @@ def update_row(
         metadata_payload.update(json.loads(str(row["metadata"] or "{}")))
     except Exception:
         pass
-    metadata_payload.update(classify_memory(content, new_target))
+    metadata_payload.update(classify_memory(content, new_target, str(row["source"])))
     metadata_json = json.dumps(metadata_payload, ensure_ascii=False, sort_keys=True)
     conn.execute(
         """
@@ -294,6 +272,7 @@ def update_row(
     )
     conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
     conn.execute("INSERT INTO memories_fts(memory_id, content, summary) VALUES (?, ?, ?)", (memory_id, content, summary))
+    sync_memory_entities(conn, memory_id=memory_id, content=content, target=new_target, metadata=metadata_payload)
     conn.commit()
     return True, summary, updated_at
 
@@ -332,6 +311,8 @@ def delete_rows(
     placeholders = ",".join("?" for _ in scoped_ids)
     before = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
     conn.execute(f"DELETE FROM memories_fts WHERE memory_id IN ({placeholders})", scoped_ids)
+    conn.execute(f"DELETE FROM memory_entities WHERE memory_id IN ({placeholders})", scoped_ids)
+    conn.execute(f"DELETE FROM memory_feedback WHERE memory_id IN ({placeholders})", scoped_ids)
     conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", scoped_ids)
     conn.commit()
     after = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])

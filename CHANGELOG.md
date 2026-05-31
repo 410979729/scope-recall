@@ -4,6 +4,22 @@ All notable changes to `scope-recall` will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-05-31
+
+### Added
+- Added a local SQLite graph layer with `memory_entities` and `memory_feedback` tables.
+- Added deterministic entity extraction and backfill for existing SQLite truth rows.
+- Added `scope_recall_context`, `scope_recall_probe`, `scope_recall_related`, and `scope_recall_feedback` tools.
+- Added memory type, importance, trust, entity, and tag metadata support for explicit `scope_recall_store` calls.
+- Added recall ranking support for metadata quality and entity overlap while preserving lexical/vector gates.
+- Added BM25 ordering for SQLite FTS5 candidates before recency tie-breaking, so older exact lexical matches are not cut from the candidate pool by newer weak hits.
+- Added regression coverage for entity probe, related lookup, compact context rendering, feedback trust updates, and stats.
+
+### Changed
+- Bumped package and plugin metadata to `1.0.4`.
+- Extended stats with scoped entity and feedback counts.
+- Made `retrieval.candidate_pool` apply inside SQLite lexical candidate selection.
+
 ### Fixed
 - Reject generic `[System note: ...]` gateway/runtime wrappers, interrupted-turn recovery prompts, and preserved task-list wrappers before they can enter automatic capture or manual write surfaces.
 - Added regression coverage for the stale restored-message failure mode where an interrupted-turn system note could preserve an older user request and contaminate recall.
@@ -109,4 +125,3 @@ All notable changes to `scope-recall` will be documented in this file.
 - Added a `vector_only_min_score` gate so weak vector-only matches cannot auto-recall unrelated durable ops rows without lexical evidence.
 - Added alias-expanded SQL discovery so lexical-only recall still finds intended alias matches such as `response style` → `replies` without broad recency scans.
 - Added regression coverage for unrelated-query suppression, high-confidence semantic hits, relevant lexical hits, and alias-expanded discovery.
-

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .gating import query_tokens
+from .graph import apply_quality_weight, entity_overlap_bonus
 from .models import RecallItem
 from .scoring import combine_scores
 
@@ -76,6 +77,23 @@ class RecallService:
         for item in results:
             meta = dict(item.metadata or {})
             base_score = self.final_score(meta)
+            base_score = apply_quality_weight(
+                base_score,
+                meta,
+                weight=float(retrieval_cfg.get("metadata_weight") or 0.08),
+            )
+            base_score = max(
+                0.0,
+                min(
+                    1.0,
+                    base_score
+                    + entity_overlap_bonus(
+                        query,
+                        meta,
+                        weight=float(retrieval_cfg.get("entity_weight") or 0.06),
+                    ),
+                ),
+            )
             meta["base_score"] = base_score
             item.metadata = meta
             item.score = base_score

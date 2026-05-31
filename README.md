@@ -18,7 +18,7 @@ Current-turn recall · Permanent shared memory · Local scratch scopes · SQLite
 
 `scope-recall` is a Hermes local memory provider built for **current-turn recall** and **permanent semantic memory**. Durable user/project/ops/memory facts are shared across windows/chats for the same user + agent identity; raw general turn captures stay local to the current chat/thread/session.
 
-Version `1.0.3` is the structured-governance and embedding-credential isolation patch release for the documented V1 interfaces, packaged as a public release candidate for broader field testing. It keeps the V1 compatibility contract in [`docs/stability.md`](docs/stability.md) while adding structured classification metadata, FTS hygiene repair coverage, and a dedicated Gemini embedding credential environment variable.
+Version `1.0.4` is the local graph, context, and feedback release for the documented V1 interfaces, packaged as a public release candidate for broader field testing. It keeps the V1 compatibility contract in [`docs/stability.md`](docs/stability.md) while adding SQLite-backed entity indexes, type/importance metadata, trust feedback, and compact context/probe tools on top of the existing structured-governance layer.
 
 It uses a **two-layer design**:
 
@@ -82,6 +82,7 @@ Most agent memory pain is not just "wrong memory was recalled". The bigger user-
 | Current-turn recall | `prefetch(query)` retrieves against the active user query; `queue_prefetch()` is intentionally a no-op |
 | Storage authority | SQLite is the durable truth; LanceDB is rebuildable companion state |
 | Hybrid retrieval | SQLite lexical/FTS candidates + LanceDB semantic candidates + bounded prompt rendering |
+| Entity/context layer | SQLite entity index, entity probe/related tools, compact query context, trust feedback |
 | Memory scope model | shared durable scope for user/project/ops/memory facts; local scope for general scratch captures |
 | Built-in memory integration | Hermes curated `USER.md` / `MEMORY.md` are live-read, not mirrored into SQLite. In gateway contexts with an explicit `user_id`, curated-file recall is opt-in/allowlisted to avoid cross-user leakage from global profile files. |
 | Governance | deterministic exact dedupe, conservative near-duplicate merge, filtering, metadata, decay review |

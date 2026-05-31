@@ -56,7 +56,9 @@
     ],
     "freshness_base_weight": 0.22,
     "freshness_step_weight": 0.1,
-    "freshness_max_weight": 0.42
+    "freshness_max_weight": 0.42,
+    "metadata_weight": 0.08,
+    "entity_weight": 0.06
   },
   "vector": {
     "enabled": true,

@@ -10,6 +10,25 @@ SCOPE_RECALL_STORE_SCHEMA = {
                 "description": "Category. user/memory/project/ops are shared durable; general stays local to the current chat/thread/session.",
                 "enum": ["user", "memory", "project", "ops", "general"],
             },
+            "memory_type": {
+                "type": "string",
+                "description": "Optional semantic type used for governance and ranking.",
+                "enum": ["factual", "preference", "procedure", "project", "episodic", "resource", "constraint"],
+            },
+            "importance": {
+                "type": "number",
+                "description": "Optional 0..1 importance hint. Higher values are mildly favored in recall.",
+            },
+            "entities": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional named entities to attach to this memory.",
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional tags for filtering and audit.",
+            },
         },
         "required": ["content"],
     },
@@ -132,4 +151,62 @@ SCOPE_RECALL_STATS_SCHEMA = {
     "name": "scope_recall_stats",
     "description": "Show Scope Recall storage, retrieval, and scope statistics.",
     "parameters": {"type": "object", "properties": {}},
+}
+
+SCOPE_RECALL_CONTEXT_SCHEMA = {
+    "name": "scope_recall_context",
+    "description": "Build a compact task-relevant memory context block plus structured evidence for a query.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Current task or question."},
+            "limit": {"type": "integer", "description": "Maximum memories to include."},
+            "max_chars": {"type": "integer", "description": "Maximum characters for the rendered context block."},
+        },
+        "required": ["query"],
+    },
+}
+
+SCOPE_RECALL_PROBE_SCHEMA = {
+    "name": "scope_recall_probe",
+    "description": "Probe all accessible Scope Recall memories attached to an entity.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "entity": {"type": "string", "description": "Entity name, person, project, service, or identifier."},
+            "limit": {"type": "integer", "description": "Maximum memories to return."},
+        },
+        "required": ["entity"],
+    },
+}
+
+SCOPE_RECALL_RELATED_SCHEMA = {
+    "name": "scope_recall_related",
+    "description": "List entities that co-occur with a given entity in accessible memories.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "entity": {"type": "string", "description": "Entity to expand from."},
+            "limit": {"type": "integer", "description": "Maximum related entities to return."},
+        },
+        "required": ["entity"],
+    },
+}
+
+SCOPE_RECALL_FEEDBACK_SCHEMA = {
+    "name": "scope_recall_feedback",
+    "description": "Mark an accessible memory as helpful or unhelpful so future recall can adjust trust.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "description": "Memory id to rate."},
+            "rating": {
+                "type": "string",
+                "description": "Feedback rating.",
+                "enum": ["helpful", "unhelpful", "up", "down", "1", "-1"],
+            },
+            "note": {"type": "string", "description": "Optional short audit note."},
+        },
+        "required": ["id", "rating"],
+    },
 }

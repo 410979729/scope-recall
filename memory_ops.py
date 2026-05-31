@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .capture import store_now
+from .graph import clamp_float, compact_context_lines, load_metadata, normalize_entity
 from .governance import classify_memory, is_conflicting, merge_memory_text, semantic_similarity
 from .models import recall_scope_mode
 from .sql_store import delete_rows, exact_duplicate_groups, iter_curated_entries, update_row
@@ -336,6 +337,162 @@ def hygiene_report(provider: Any, *, limit: int = 200) -> dict[str, Any]:
         return build_hygiene_report(provider._require_conn(), vector_store=provider._vector_store, limit=limit)
 
 
+def _row_payload(row: Any) -> dict[str, Any]:
+    metadata = load_metadata(row["metadata"] if "metadata" in row.keys() else "{}")
+    return {
+        "id": str(row["id"]),
+        "scope_id": str(row["scope_id"]),
+        "source": str(row["source"]),
+        "target": str(row["target"]),
+        "content": str(row["content"]),
+        "summary": str(row["summary"]),
+        "updated_at": str(row["updated_at"]),
+        "memory_type": str(metadata.get("memory_type") or ""),
+        "confidence": clamp_float(metadata.get("confidence"), default=0.5),
+        "trust": clamp_float(metadata.get("trust"), default=0.5),
+        "importance": clamp_float(metadata.get("importance"), default=0.5),
+        "entities": metadata.get("entities") if isinstance(metadata.get("entities"), list) else [],
+        "tags": metadata.get("tags") if isinstance(metadata.get("tags"), list) else [],
+    }
+
+
+def context_payload(provider: Any, *, query: str, limit: int = 5, max_chars: int = 900) -> dict[str, Any]:
+    results = provider._recall_service.search_memories(query, limit=max(1, min(20, limit)))
+    records: list[dict[str, Any]] = []
+    entity_counts: dict[str, int] = {}
+    for item in results:
+        metadata = load_metadata(item.metadata or {})
+        entities = metadata.get("entities") if isinstance(metadata.get("entities"), list) else []
+        for entity in entities:
+            entity_counts[str(entity)] = entity_counts.get(str(entity), 0) + 1
+        records.append(
+            {
+                "id": item.id,
+                "target": item.target,
+                "source": item.source,
+                "content": item.content,
+                "summary": item.summary,
+                "score": round(item.score, 4),
+                "updated_at": item.updated_at,
+                "memory_type": str(metadata.get("memory_type") or ""),
+                "entities": entities,
+            }
+        )
+    top_entities = [
+        {"entity": entity, "count": count}
+        for entity, count in sorted(entity_counts.items(), key=lambda pair: (-pair[1], pair[0]))[:10]
+    ]
+    return {
+        "query": query,
+        "count": len(records),
+        "context": compact_context_lines(records, max_chars=max(120, min(4000, max_chars))),
+        "entities": top_entities,
+        "results": records,
+    }
+
+
+def probe_entity(provider: Any, *, entity: str, limit: int = 10) -> dict[str, Any]:
+    normalized = normalize_entity(entity)
+    if not normalized:
+        return {"entity": "", "count": 0, "results": []}
+    conn = provider._require_conn()
+    with provider._lock:
+        rows = conn.execute(
+            f"""
+            SELECT m.*
+            FROM memory_entities e
+            JOIN memories m ON m.id = e.memory_id
+            WHERE e.entity = ? AND m.scope_id IN ({_scope_placeholders(provider)})
+            ORDER BY
+                CASE m.target
+                    WHEN 'user' THEN 0
+                    WHEN 'project' THEN 1
+                    WHEN 'ops' THEN 2
+                    WHEN 'memory' THEN 3
+                    ELSE 4
+                END,
+                m.updated_at DESC
+            LIMIT ?
+            """,
+            [normalized, *_accessible_scope_params(provider), max(1, min(50, limit))],
+        ).fetchall()
+    return {"entity": normalized, "count": len(rows), "results": [_row_payload(row) for row in rows]}
+
+
+def related_entities(provider: Any, *, entity: str, limit: int = 12) -> dict[str, Any]:
+    normalized = normalize_entity(entity)
+    if not normalized:
+        return {"entity": "", "count": 0, "related": []}
+    conn = provider._require_conn()
+    with provider._lock:
+        rows = conn.execute(
+            f"""
+            WITH matched AS (
+                SELECT e.memory_id
+                FROM memory_entities e
+                JOIN memories m ON m.id = e.memory_id
+                WHERE e.entity = ? AND m.scope_id IN ({_scope_placeholders(provider)})
+            )
+            SELECT e.entity, COUNT(*) AS count
+            FROM memory_entities e
+            JOIN matched ON matched.memory_id = e.memory_id
+            WHERE e.entity != ?
+            GROUP BY e.entity
+            ORDER BY count DESC, e.entity ASC
+            LIMIT ?
+            """,
+            [normalized, *_accessible_scope_params(provider), normalized, max(1, min(50, limit))],
+        ).fetchall()
+    related = [{"entity": str(row["entity"]), "count": int(row["count"])} for row in rows]
+    return {"entity": normalized, "count": len(related), "related": related}
+
+
+def feedback_memory(provider: Any, *, memory_id: str, rating: str, note: str = "") -> dict[str, Any]:
+    rating_text = str(rating or "").strip().lower()
+    if rating_text in {"helpful", "up", "+1", "1", "true", "yes"}:
+        rating_value = 1
+    elif rating_text in {"unhelpful", "down", "-1", "0", "false", "no"}:
+        rating_value = -1
+    else:
+        return {"updated": False, "error": "rating must be helpful or unhelpful", "id": memory_id}
+
+    conn = provider._require_conn()
+    with provider._lock:
+        row = conn.execute(
+            f"SELECT * FROM memories WHERE id = ? AND scope_id IN ({_scope_placeholders(provider)})",
+            [memory_id, *_accessible_scope_params(provider)],
+        ).fetchone()
+        if row is None:
+            return {"updated": False, "error": "id not found", "id": memory_id}
+        metadata = load_metadata(row["metadata"])
+        feedback_count = int(metadata.get("feedback_count") or 0) + 1
+        helpful_count = int(metadata.get("helpful_count") or 0)
+        unhelpful_count = int(metadata.get("unhelpful_count") or 0)
+        if rating_value > 0:
+            helpful_count += 1
+        else:
+            unhelpful_count += 1
+        old_trust = clamp_float(metadata.get("trust"), default=0.5)
+        metadata["trust"] = clamp_float(old_trust + (0.08 if rating_value > 0 else -0.12), default=old_trust)
+        metadata["feedback_count"] = feedback_count
+        metadata["helpful_count"] = helpful_count
+        metadata["unhelpful_count"] = unhelpful_count
+        metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+        conn.execute(
+            "INSERT INTO memory_feedback(memory_id, rating, note, created_at) VALUES (?, ?, ?, ?)",
+            (memory_id, rating_value, note[:240], datetime.now(timezone.utc).isoformat()),
+        )
+        conn.execute("UPDATE memories SET metadata = ? WHERE id = ?", (metadata_json, memory_id))
+        conn.commit()
+    return {
+        "updated": True,
+        "id": memory_id,
+        "rating": "helpful" if rating_value > 0 else "unhelpful",
+        "trust": metadata["trust"],
+        "feedback_count": feedback_count,
+    }
+
+
 def stats_payload(provider: Any) -> dict[str, Any]:
     conn = provider._require_conn()
     with provider._lock:
@@ -343,6 +500,24 @@ def stats_payload(provider: Any) -> dict[str, Any]:
         scoped = conn.execute(f"SELECT COUNT(*) FROM memories WHERE scope_id IN ({_scope_placeholders(provider)})", _accessible_scope_params(provider)).fetchone()[0]
         local = conn.execute("SELECT COUNT(*) FROM memories WHERE scope_id = ?", (provider._scope_id,)).fetchone()[0]
         shared = conn.execute("SELECT COUNT(*) FROM memories WHERE scope_id = ?", (provider._shared_scope_id,)).fetchone()[0]
+        entities = conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT e.entity)
+            FROM memory_entities e
+            JOIN memories m ON m.id = e.memory_id
+            WHERE m.scope_id IN ({_scope_placeholders(provider)})
+            """,
+            _accessible_scope_params(provider),
+        ).fetchone()[0]
+        feedback_rows = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM memory_feedback f
+            JOIN memories m ON m.id = f.memory_id
+            WHERE m.scope_id IN ({})
+            """.format(_scope_placeholders(provider)),
+            _accessible_scope_params(provider),
+        ).fetchone()[0]
     vector_path = ""
     vector_table = ""
     vector_embedder: dict[str, Any] = {}
@@ -361,6 +536,8 @@ def stats_payload(provider: Any) -> dict[str, Any]:
         "scope_memories": scoped,
         "local_scope_memories": local,
         "shared_scope_memories": shared,
+        "scope_entities": entities,
+        "scope_feedback_rows": feedback_rows,
         "curated_memories": len(iter_curated_entries(provider._hermes_home)),
         "migration": dict(provider._migration_info),
         "vector": {

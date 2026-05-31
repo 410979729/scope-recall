@@ -4,6 +4,8 @@ import sqlite3
 from typing import Any
 
 from .gating import build_fts_query, compact_text, like_terms, normalized_token_set, query_tokens
+from .governance import classify_memory
+from .graph import load_metadata
 from .models import RecallItem
 from .scoring import lexical_score
 from .sql_store import curated_recall_item_id, iter_curated_entries
@@ -52,27 +54,46 @@ def _alias_like_terms(query: str, tokens: list[str]) -> list[str]:
     return terms
 
 
+def _row_metadata(
+    row: sqlite3.Row,
+    *,
+    lexical_score: float = 0.0,
+    vector_score: float = 0.0,
+    bm25_score: float | None = None,
+) -> dict[str, Any]:
+    metadata = load_metadata(row["metadata"] if "metadata" in row.keys() else "{}")
+    metadata.update(
+        {
+            "lexical_score": lexical_score,
+            "vector_score": vector_score,
+            "scope_id": row["scope_id"],
+        }
+    )
+    if bm25_score is not None:
+        metadata["bm25_score"] = bm25_score
+    return metadata
+
+
 def search_db_memories(provider: Any, query: str, *, limit: int) -> list[RecallItem]:
     conn = provider._require_conn()
     tokens = query_tokens(query)
     fts_query = build_fts_query(tokens)
     rows: list[sqlite3.Row] = []
-    candidate_pool = max(limit * 2, limit)
-    recent_scan_limit = max(
-        candidate_pool,
-        int((provider._retrieval_config or {}).get("candidate_pool") or candidate_pool) * 4,
-        48,
-    )
+    try:
+        configured_pool = int((provider._retrieval_config or {}).get("candidate_pool") or 0)
+    except (TypeError, ValueError):
+        configured_pool = 0
+    candidate_pool = max(limit * 2, limit, configured_pool)
     with provider._lock:
         if fts_query:
             rows.extend(
                 conn.execute(
                     """
-                    SELECT m.*
+                    SELECT m.*, bm25(memories_fts) AS bm25_score
                     FROM memories_fts
                     JOIN memories m ON m.id = memories_fts.memory_id
                     WHERE memories_fts MATCH ? AND m.scope_id IN ({})
-                    ORDER BY m.updated_at DESC
+                    ORDER BY bm25(memories_fts) ASC, m.updated_at DESC
                     LIMIT ?
                     """.format(_scope_placeholders(provider)),
                     [fts_query, *_accessible_scope_params(provider), candidate_pool],
@@ -125,6 +146,14 @@ def search_db_memories(provider: Any, query: str, *, limit: int) -> list[RecallI
         # (for example OpenClaw/凌晨 task context) despite zero token overlap.
         # Recency is only a reranking bonus after relevance is established.
 
+    bm25_scores: dict[str, float] = {}
+    for row in rows:
+        if "bm25_score" not in row.keys():
+            continue
+        try:
+            bm25_scores[str(row["id"])] = float(row["bm25_score"])
+        except (TypeError, ValueError):
+            continue
     dedup_rows: dict[str, sqlite3.Row] = {row["id"]: row for row in rows}
     min_score = float((provider._retrieval_config or {}).get("min_score") or provider._config_value("min_score", 0.18))
     results: list[RecallItem] = []
@@ -147,7 +176,12 @@ def search_db_memories(provider: Any, query: str, *, limit: int) -> list[RecallI
                 target=row["target"],
                 score=score,
                 updated_at=row["updated_at"],
-                metadata={"lexical_score": score, "vector_score": 0.0, "scope_id": row["scope_id"]},
+                metadata=_row_metadata(
+                    row,
+                    lexical_score=score,
+                    vector_score=0.0,
+                    bm25_score=bm25_scores.get(str(row["id"])),
+                ),
             )
         )
     return results
@@ -166,12 +200,27 @@ def search_vector_memories(provider: Any, query: str, *, limit: int) -> list[Rec
         mark_vector_needs_repair(provider, exc)
         return []
     threshold = float((provider._retrieval_config or {}).get("vector_min_score") or 0.12)
+    id_metadata: dict[str, dict[str, Any]] = {}
+    row_ids = [str(row.get("id") or "") for row in rows if str(row.get("id") or "")]
+    if row_ids:
+        placeholders = ",".join("?" for _ in row_ids)
+        try:
+            with provider._lock:
+                meta_rows = provider._require_conn().execute(
+                    f"SELECT id, scope_id, metadata FROM memories WHERE id IN ({placeholders})",
+                    row_ids,
+                ).fetchall()
+            id_metadata = {str(row["id"]): load_metadata(row["metadata"]) for row in meta_rows}
+        except Exception:
+            id_metadata = {}
     results: list[RecallItem] = []
     for row in rows:
         distance = float(row.get("_distance") or 0.0)
         vector_score = max(0.0, 1.0 - distance)
         if vector_score < threshold:
             continue
+        metadata = dict(id_metadata.get(str(row["id"])) or {})
+        metadata.update({"lexical_score": 0.0, "vector_score": vector_score, "scope_id": row.get("scope_id")})
         results.append(
             RecallItem(
                 id=row["id"],
@@ -181,7 +230,7 @@ def search_vector_memories(provider: Any, query: str, *, limit: int) -> list[Rec
                 target=row["target"],
                 score=vector_score,
                 updated_at=row["updated_at"],
-                metadata={"lexical_score": 0.0, "vector_score": vector_score, "scope_id": row.get("scope_id")},
+                metadata=metadata,
             )
         )
     return results
@@ -226,6 +275,8 @@ def search_curated_memories(provider: Any, query: str) -> list[RecallItem]:
         )
         if score < min_score:
             continue
+        metadata = classify_memory(content, target, "builtin-curated")
+        metadata.update({"lexical_score": score, "vector_score": 0.0})
         results.append(
             RecallItem(
                 id=curated_recall_item_id(target, content),
@@ -235,7 +286,7 @@ def search_curated_memories(provider: Any, query: str) -> list[RecallItem]:
                 target=target,
                 score=score,
                 updated_at=updated_at,
-                metadata={"lexical_score": score, "vector_score": 0.0},
+                metadata=metadata,
             )
         )
     return results

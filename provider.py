@@ -16,14 +16,18 @@ from .embedders import BaseEmbedder
 from .gating import clean_text, config_bool, dedup_key, normalize_query, should_skip_retrieval
 from .governance import extract_candidates
 from .memory_ops import (
+    context_payload,
     dedupe_memories,
     delete_memories,
     export_memories,
+    feedback_memory,
     find_semantic_merge_candidate,
     govern_memories,
     hygiene_report,
     merge_memories,
+    probe_entity,
     repair_vector,
+    related_entities,
     stats_payload,
     store_memory_now,
     update_memory,
@@ -34,12 +38,16 @@ from .recall import RecallService
 from .prompting import render_current_turn_recall
 from .schemas import (
     SCOPE_RECALL_DEDUPE_SCHEMA,
+    SCOPE_RECALL_CONTEXT_SCHEMA,
     SCOPE_RECALL_EXPORT_SCHEMA,
+    SCOPE_RECALL_FEEDBACK_SCHEMA,
     SCOPE_RECALL_FORGET_SCHEMA,
     SCOPE_RECALL_GOVERN_SCHEMA,
     SCOPE_RECALL_HYGIENE_SCHEMA,
     SCOPE_RECALL_MERGE_SCHEMA,
+    SCOPE_RECALL_PROBE_SCHEMA,
     SCOPE_RECALL_REPAIR_SCHEMA,
+    SCOPE_RECALL_RELATED_SCHEMA,
     SCOPE_RECALL_SEARCH_SCHEMA,
     SCOPE_RECALL_STATS_SCHEMA,
     SCOPE_RECALL_STORE_SCHEMA,
@@ -187,6 +195,7 @@ class ScopeRecallMemoryProvider(MemoryProvider):
             " Durable user/project/ops/memory rows are shared across windows/chats for the same user + agent identity,"
             " while raw general turn captures remain local to the current chat/thread/session."
             " Built-in curated memory files are read live at recall time, and previous-turn prefetched memory is never injected into a new topic."
+            " Local entity indexes and trust feedback can refine recall without leaving the SQLite truth boundary."
             + suffix
         )
 
@@ -298,6 +307,10 @@ class ScopeRecallMemoryProvider(MemoryProvider):
         schemas = [
             SCOPE_RECALL_STORE_SCHEMA,
             SCOPE_RECALL_SEARCH_SCHEMA,
+            SCOPE_RECALL_CONTEXT_SCHEMA,
+            SCOPE_RECALL_PROBE_SCHEMA,
+            SCOPE_RECALL_RELATED_SCHEMA,
+            SCOPE_RECALL_FEEDBACK_SCHEMA,
             SCOPE_RECALL_FORGET_SCHEMA,
             SCOPE_RECALL_UPDATE_SCHEMA,
             SCOPE_RECALL_MERGE_SCHEMA,
@@ -379,6 +392,18 @@ class ScopeRecallMemoryProvider(MemoryProvider):
 
     def _hygiene_report(self, *, limit: int = 200) -> dict[str, Any]:
         return hygiene_report(self, limit=limit)
+
+    def _context_payload(self, *, query: str, limit: int = 5, max_chars: int = 900) -> dict[str, Any]:
+        return context_payload(self, query=query, limit=limit, max_chars=max_chars)
+
+    def _probe_entity(self, *, entity: str, limit: int = 10) -> dict[str, Any]:
+        return probe_entity(self, entity=entity, limit=limit)
+
+    def _related_entities(self, *, entity: str, limit: int = 12) -> dict[str, Any]:
+        return related_entities(self, entity=entity, limit=limit)
+
+    def _feedback_memory(self, *, memory_id: str, rating: str, note: str = "") -> dict[str, Any]:
+        return feedback_memory(self, memory_id=memory_id, rating=rating, note=note)
 
     def _search_vector_memories(self, query: str, *, limit: int) -> List[RecallItem]:
         return search_vector_memories(self, query, limit=limit)

@@ -8,6 +8,7 @@ from typing import Any, Callable
 from tools.registry import tool_error
 
 from .capture_filters import CaptureFilterResult, should_capture_text
+from .graph import clamp_float
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,10 @@ class ScopeRecallToolService:
         handlers: dict[str, Callable[[dict[str, Any]], str]] = {
             "scope_recall_store": self._handle_store,
             "scope_recall_search": self._handle_search,
+            "scope_recall_context": self._handle_context,
+            "scope_recall_probe": self._handle_probe,
+            "scope_recall_related": self._handle_related,
+            "scope_recall_feedback": self._handle_feedback,
             "scope_recall_forget": self._handle_forget,
             "scope_recall_update": self._handle_update,
             "scope_recall_dedupe": self._handle_dedupe,
@@ -90,6 +95,7 @@ class ScopeRecallToolService:
             source="tool-store",
             target=target,
             session_id=self.provider._session_id,
+            metadata=self._store_metadata(args),
         )
         return self._json(
             {
@@ -115,6 +121,45 @@ class ScopeRecallToolService:
                 "count": len(results),
                 "results": [self._serialize_recall_item(item) for item in results],
             }
+        )
+
+    def _handle_context(self, args: dict[str, Any]) -> str:
+        query = self._clean_query(args)
+        if not query:
+            return tool_error("query is required")
+        return self._json(
+            self.provider._context_payload(
+                query=query,
+                limit=self._limit(args),
+                max_chars=max(120, min(4000, int(args.get("max_chars") or 900))),
+            )
+        )
+
+    def _handle_probe(self, args: dict[str, Any]) -> str:
+        entity = str(args.get("entity") or "").strip()
+        if not entity:
+            return tool_error("entity is required")
+        return self._json(self.provider._probe_entity(entity=entity, limit=self._limit(args)))
+
+    def _handle_related(self, args: dict[str, Any]) -> str:
+        entity = str(args.get("entity") or "").strip()
+        if not entity:
+            return tool_error("entity is required")
+        return self._json(self.provider._related_entities(entity=entity, limit=self._limit(args)))
+
+    def _handle_feedback(self, args: dict[str, Any]) -> str:
+        memory_id = str(args.get("id") or "").strip()
+        if not memory_id:
+            return tool_error("id is required")
+        rating = str(args.get("rating") or "").strip()
+        if not rating:
+            return tool_error("rating is required")
+        return self._json(
+            self.provider._feedback_memory(
+                memory_id=memory_id,
+                rating=rating,
+                note=self.provider._clean_text(str(args.get("note") or "")),
+            )
         )
 
     def _handle_forget(self, args: dict[str, Any]) -> str:
@@ -288,7 +333,31 @@ class ScopeRecallToolService:
             "recency_bonus": self._rounded_metadata(metadata, "recency_bonus"),
             "lexical_score": self._rounded_metadata(metadata, "lexical_score"),
             "vector_score": self._rounded_metadata(metadata, "vector_score"),
+            "bm25_score": self._rounded_metadata(metadata, "bm25_score"),
+            "memory_type": str(metadata.get("memory_type") or ""),
+            "trust": self._rounded_metadata(metadata, "trust"),
+            "importance": self._rounded_metadata(metadata, "importance"),
+            "entities": metadata.get("entities") if isinstance(metadata.get("entities"), list) else [],
         }
+
+    def _store_metadata(self, args: dict[str, Any]) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        if args.get("memory_type"):
+            metadata["memory_type"] = str(args.get("memory_type"))
+        if args.get("importance") is not None:
+            metadata["importance"] = clamp_float(args.get("importance"), default=0.5)
+        for key in ("entities", "tags"):
+            value = args.get(key)
+            if isinstance(value, str):
+                values = [item.strip() for item in value.split(",")]
+            elif isinstance(value, list):
+                values = [str(item).strip() for item in value]
+            else:
+                values = []
+            values = [item for item in values if item]
+            if values:
+                metadata[key] = values
+        return metadata
 
     @staticmethod
     def _rounded_metadata(metadata: dict[str, Any], key: str) -> float:

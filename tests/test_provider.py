@@ -498,6 +498,67 @@ def test_search_tool_returns_ranked_results(provider):
     assert "recency_bonus" in payload["results"][0]
 
 
+def test_graph_context_and_feedback_tools(provider):
+    first = json.loads(
+        provider.handle_tool_call(
+            "scope_recall_store",
+            {
+                "content": "Yuheng owns the Scope Recall architecture for Hermes.",
+                "target": "project",
+                "memory_type": "project",
+                "importance": 0.9,
+                "entities": ["Yuheng", "Scope Recall", "Hermes"],
+                "tags": ["architecture"],
+            },
+        )
+    )
+    second = json.loads(
+        provider.handle_tool_call(
+            "scope_recall_store",
+            {
+                "content": "Scope Recall deploy command uses uv run app.",
+                "target": "ops",
+                "memory_type": "procedure",
+                "entities": ["Scope Recall", "Hermes"],
+            },
+        )
+    )
+    assert first["stored"] is True
+    assert second["stored"] is True
+
+    probe = json.loads(provider.handle_tool_call("scope_recall_probe", {"entity": "Scope Recall", "limit": 5}))
+    assert probe["entity"] == "scope recall"
+    assert probe["count"] == 2
+    assert {item["id"] for item in probe["results"]} == {first["id"], second["id"]}
+
+    related = json.loads(provider.handle_tool_call("scope_recall_related", {"entity": "Scope Recall", "limit": 5}))
+    related_entities = {item["entity"] for item in related["related"]}
+    assert {"hermes", "yuheng"} <= related_entities
+
+    context = json.loads(
+        provider.handle_tool_call(
+            "scope_recall_context",
+            {"query": "How does Yuheng deploy Scope Recall?", "limit": 5, "max_chars": 600},
+        )
+    )
+    assert context["count"] >= 2
+    assert "Scope Recall" in context["context"]
+
+    feedback = json.loads(provider.handle_tool_call("scope_recall_feedback", {"id": first["id"], "rating": "helpful"}))
+    assert feedback["updated"] is True
+    assert feedback["trust"] > 0.5
+
+    search = json.loads(provider.handle_tool_call("scope_recall_search", {"query": "Yuheng Scope Recall architecture", "limit": 5}))
+    hit = next(item for item in search["results"] if item["id"] == first["id"])
+    assert hit["memory_type"] == "project"
+    assert "scope recall" in hit["entities"]
+    assert hit["trust"] == feedback["trust"]
+
+    stats = json.loads(provider.handle_tool_call("scope_recall_stats", {}))
+    assert stats["scope_entities"] >= 3
+    assert stats["scope_feedback_rows"] == 1
+
+
 def test_replace_in_curated_memory_is_reflected_without_stale_old_entry(provider, monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     store = MemoryStore()

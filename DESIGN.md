@@ -101,6 +101,21 @@ Used for:
 
 It duplicates retrieval-ready fields from SQLite plus a `vector` column, but it is **not** the truth layer.
 
+### Layer D — SQLite graph and feedback indexes
+
+Stored in the same SQLite truth database:
+
+- `memory_entities`
+- `memory_feedback`
+
+Used for:
+
+- deterministic entity probe and related-entity lookup
+- compact task context construction
+- local trust feedback that adjusts future ranking without rewriting memory text
+
+This borrows the useful graph/trust ideas from Hermes memory providers such as Hindsight, Holographic, Honcho, RetainDB, and Supermemory while keeping the implementation local and auditable. Entity rows and feedback rows are indexes over SQLite truth rows, not a separate authority.
+
 ## Why SQLite truth + LanceDB companion
 
 This architecture gives us:
@@ -145,6 +160,8 @@ Important rule:
 - only blend when both sides exist
 
 That prevents good curated lexical hits from being suppressed merely because there is no vector twin.
+
+SQLite FTS5 candidate discovery uses `bm25(memories_fts)` before recency tie-breaking. Final ranking still uses the provider's lexical/vector/freshness/entity/trust scoring, but BM25 prevents old high-relevance lexical rows from being cut out of the candidate pool by newer weak matches.
 
 ## Embedders
 
@@ -269,6 +286,10 @@ Primary-agent default tools:
 
 - `scope_recall_store`
 - `scope_recall_search`
+- `scope_recall_context`
+- `scope_recall_probe`
+- `scope_recall_related`
+- `scope_recall_feedback`
 - `scope_recall_forget`
 - `scope_recall_update`
 - `scope_recall_merge`
@@ -289,7 +310,7 @@ Subagents do not get tool schemas and cannot use them.
 
 For V1 release/publish, keep these gates green:
 
-1. package and plugin metadata stay on `1.0.3` until the next patch release
+1. package and plugin metadata stay on `1.0.4` until the next patch release
 2. public maturity wording remains beta / release-candidate until broader field testing justifies a production-stable classifier
 3. README, DESIGN, CHANGELOG, stability contract, migration docs, and upstream-difference docs stay in sync
 4. local release gate passes with `python scripts/check.release.py`
@@ -309,6 +330,7 @@ What is already real now:
 - release docs include migration notes, upstream differences, a V1 stability contract, and an OpenClaw import script
 - vector sync repairs stale ids and duplicate physical rows during normal initialization
 - stats distinguish vector physical rows, unique ids, and duplicate extra rows
+- SQLite graph and feedback indexes exist for entity probe/related lookup, compact context rendering, and trust feedback
 - top-level package import is lightweight enough for clean wheel/venv checks without Hermes runtime modules
 - release automation runs the full `scripts/check.release.py` gate in CI
 
