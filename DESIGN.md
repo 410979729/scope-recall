@@ -36,6 +36,11 @@ That split is deliberate. SQLite is the durable source of truth; LanceDB is the 
 - multi-tier summarization / promotion / compression orchestration
 - cloud-only dependency requirement
 - forcing external embedding APIs for basic functionality
+- built-in cross-instance replication, Redis pub/sub, or Tailscale + SQLite sync
+- cluster-wide memory source-of-truth responsibilities; external PostgreSQL/shared backends should own that layer
+- automatic Hermes skill creation or automatic `SKILL.md` writes
+- full holographic memory clone
+- Grafana/Prometheus HTTP service without a concrete deployment need
 
 ## Layer split
 

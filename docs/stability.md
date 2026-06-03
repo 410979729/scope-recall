@@ -1,6 +1,6 @@
 # Scope Recall V1 stability contract
 
-`scope-recall` 1.0.7 is the roadmap observability and retrieval-quality patch release for the Hermes Scope Recall memory provider V1 line.
+`scope-recall` 1.0.8 is the CI/entity-fallback and product-boundary documentation patch release for the Hermes Scope Recall memory provider V1 line.
 
 This document defines what V1 commits to keep stable, what may evolve in minor releases, and what remains explicitly outside the V1 compatibility promise.
 

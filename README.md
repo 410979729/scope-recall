@@ -18,7 +18,7 @@ Current-turn recall · Permanent shared memory · Nightly workflow digest · Loc
 
 `scope-recall` is a Hermes local memory provider built for **current-turn recall** and **permanent semantic memory**. Durable user/project/ops/memory facts are shared across windows/chats for the same user + agent identity; raw general turn captures stay local to the current chat/thread/session.
 
-Version `1.0.7` continues the first stable V1 release line for the documented interfaces, packaged as a public release candidate for broader field testing. It keeps the V1 compatibility contract in [`docs/stability.md`](docs/stability.md) while adding BM25 final-score fusion, Chinese entity extraction, temporal decay, source-trust priors, contradiction relations, shared-pool observability, and inspect/explain/benchmark tools without storing raw system/tool output.
+Version `1.0.8` continues the first stable V1 release line for the documented interfaces, packaged as a public release candidate for broader field testing. It keeps the V1 compatibility contract in [`docs/stability.md`](docs/stability.md) while adding a deterministic Chinese entity fallback for no-Jieba CI/runtime environments and documenting the external shared-memory integration boundary without storing raw system/tool output.
 
 It uses a **two-layer design**:
 
@@ -35,6 +35,20 @@ This replaces the old `lancepro` naming, which was misleading because the earlie
 - **Scratch context stays local**: raw `general` turn captures stay inside the current chat/thread/session boundary.
 - **Operator actions fail closed**: cross-scope export/dedupe/govern/repair paths require explicit maintenance mode.
 - **Install remains practical**: hosted embeddings are used when configured, while deterministic `local-hash` keeps no-key bootstrap available.
+
+### Product boundaries and non-goals
+
+`scope-recall` is the local per-Hermes recall layer, not a cluster-wide memory authority. Deployments that already run a central shared backend such as PostgreSQL should keep that system as the cross-agent source of truth and use `scope-recall` through explicit import/export/tool boundaries.
+
+Non-goals for this plugin:
+
+- no built-in cross-instance replication, Redis pub/sub, or Tailscale + SQLite memory sync
+- no automatic Hermes skill creation or automatic `SKILL.md` writes; Hermes native skills own procedural knowledge packaging
+- no full holographic-memory clone or always-on LLM governance classifier by default
+- no Grafana/Prometheus HTTP service unless a concrete deployment need appears
+- no propagation of `general` scratch, raw system/tool output, or secret-like records into shared backends
+
+For external shared-memory bridge guidance, see [`docs/external-shared-memory.md`](docs/external-shared-memory.md).
 
 ---
 

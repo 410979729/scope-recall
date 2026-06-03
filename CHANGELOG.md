@@ -2,6 +2,20 @@
 
 All notable changes to `scope-recall` will be documented in this file.
 
+## [1.0.8] - 2026-06-03
+
+### Added
+- Added deterministic Chinese entity fallback hints so compound input-method terms such as `自然码` and `双拼` are extracted even when Jieba is unavailable or segments differently in CI/runtime environments.
+- Added `docs/external-shared-memory.md` to document safe bridge boundaries for deployments with a central shared backend such as PostgreSQL.
+
+### Changed
+- Bumped package, plugin, release-check metadata, README, and stability docs to `1.0.8`.
+- Clarified product non-goals: no built-in cross-instance memory replication, no automatic Hermes skill creation, no full holographic-memory clone, no always-on LLM governance by default, and no Grafana/Prometheus service without concrete deployment need.
+- Included the external shared-memory integration document in release-gate source and wheel checks.
+
+### Fixed
+- Fixed the GitHub Actions regression where the Chinese entity test could fail because `自然码` was not extracted when Jieba was not installed or did not split the compound phrase as expected.
+
 ## [1.0.7] - 2026-06-03
 
 ### Added

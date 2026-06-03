@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import sqlite3
 
@@ -19,6 +20,23 @@ def _write_config(hermes_home, values):
 
 
 def test_jieba_entity_extraction_keeps_compound_chinese_terms():
+    entities = extract_entities("fcitx5 配置使用自然码双拼，scope-recall 路线图包含中文实体增强。")
+
+    assert "自然码" in entities
+    assert "双拼" in entities
+    assert "scope-recall" in entities
+
+
+def test_chinese_compound_entity_extraction_falls_back_when_jieba_is_unavailable(monkeypatch):
+    original_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if str(name).startswith("jieba"):
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
     entities = extract_entities("fcitx5 配置使用自然码双拼，scope-recall 路线图包含中文实体增强。")
 
     assert "自然码" in entities

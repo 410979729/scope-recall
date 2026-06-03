@@ -19,7 +19,7 @@ import tempfile
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE_VERSION = "1.0.7"
+PACKAGE_VERSION = "1.0.8"
 WHEEL_DATA_PREFIX = f"scope_recall-{PACKAGE_VERSION}.data/data"
 GENERATED_DIRS = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "build", "dist", ".venv"}
 EXTERNAL_TEST_DIRS = {".hermes-agent-src"}
@@ -43,6 +43,7 @@ REQUIRED_SOURCE_FILES = {
     ".env.example",
     "docs/migration.md",
     "docs/differences-from-memory-lancedb-pro.md",
+    "docs/external-shared-memory.md",
     "docs/stability.md",
     "scripts/import.openclaw.memory_lancedb_pro.py",
     "scripts/nightly-digest.py",
@@ -73,6 +74,7 @@ REQUIRED_WHEEL = {
     f"{WHEEL_DATA_PREFIX}/.env.example",
     f"{WHEEL_DATA_PREFIX}/docs/migration.md",
     f"{WHEEL_DATA_PREFIX}/docs/differences-from-memory-lancedb-pro.md",
+    f"{WHEEL_DATA_PREFIX}/docs/external-shared-memory.md",
     f"{WHEEL_DATA_PREFIX}/docs/stability.md",
     f"{WHEEL_DATA_PREFIX}/scripts/import.openclaw.memory_lancedb_pro.py",
     f"{WHEEL_DATA_PREFIX}/scripts/nightly-digest.py",

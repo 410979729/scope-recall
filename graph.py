@@ -61,6 +61,18 @@ _COMMON_ENTITY_WORDS = {
 }
 
 
+_CJK_HINT_TERMS = {
+    "自然码",
+    "双拼",
+}
+
+
+def _hinted_cjk_entities(text: str) -> list[str]:
+    if not re.search(r"[\u4e00-\u9fff]", text or ""):
+        return []
+    return [term for term in sorted(_CJK_HINT_TERMS, key=len, reverse=True) if term in text]
+
+
 def _jieba_entities(text: str) -> list[str]:
     if not re.search(r"[\u4e00-\u9fff]", text or ""):
         return []
@@ -127,6 +139,7 @@ def extract_entities(text: str, *, target: str = "") -> list[str]:
         value = next((group for group in match.groups() if group), "")
         if value:
             candidates.append(value)
+    candidates.extend(_hinted_cjk_entities(text or ""))
     candidates.extend(_jieba_entities(text or ""))
     if str(target or "").lower() == "user":
         for token in query_tokens(text or ""):
