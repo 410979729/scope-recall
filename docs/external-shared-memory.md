@@ -124,16 +124,14 @@ A bridge-friendly export/import row should include:
 }
 ```
 
-## Non-goals
+## Cluster deployment pattern
 
-`scope-recall` does not implement these as built-in core features:
+For clusters, keep the shared center outside `scope-recall` and use `scope-recall` as the local recall/cache/tooling layer with explicit boundaries.
 
-- Tailscale + SQLite replication
-- Redis pub/sub memory propagation
-- cross-instance durable scope auto-sync
-- cluster-wide permissions or tenant governance
-- automatic Hermes skill creation
-- full holographic memory graph parity
-- always-on LLM governance classifier by default
+Recommended split:
 
-For clusters, keep the shared center outside `scope-recall`; use `scope-recall` as the local recall/cache/tooling layer with explicit boundaries.
+- central backend: global durable truth, permissions, tenancy, synchronization, and cross-agent conflict policy
+- `scope-recall`: current-turn recall, local SQLite/LanceDB state, scoped tools, operator diagnostics, and bridge-friendly import/export rows
+- Hermes native skills: procedural knowledge packaging and reusable workflows
+
+This keeps the local memory provider small, inspectable, and safe to run per agent while still allowing larger deployments to integrate it with their existing shared-memory infrastructure.

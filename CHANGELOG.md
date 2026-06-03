@@ -10,7 +10,7 @@ All notable changes to `scope-recall` will be documented in this file.
 
 ### Changed
 - Bumped package, plugin, release-check metadata, README, and stability docs to `1.0.8`.
-- Clarified product non-goals: no built-in cross-instance memory replication, no automatic Hermes skill creation, no full holographic-memory clone, no always-on LLM governance by default, and no Grafana/Prometheus service without concrete deployment need.
+- Reworded the V1 scope documentation around the positive architecture: local-first recall, SQLite truth storage, LanceDB companion retrieval, explicit bridge boundaries for external shared backends, Hermes-native skill ownership for procedural knowledge, and deployment-driven observability.
 - Included the external shared-memory integration document in release-gate source and wheel checks.
 
 ### Fixed

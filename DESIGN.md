@@ -29,18 +29,20 @@ That split is deliberate. SQLite is the durable source of truth; LanceDB is the 
 6. Isolate `general` scratch captures strongly enough for gateway multi-chat / multi-topic use.
 7. Preserve an offline-capable default path for local operation and open-source onboarding.
 
-## Non-goals for V1
+## V1 scope
 
-- full OpenClaw `memory-lancedb-pro` parity
-- LLM-backed created/merged/skipped governance parity
-- multi-tier summarization / promotion / compression orchestration
-- cloud-only dependency requirement
-- forcing external embedding APIs for basic functionality
-- built-in cross-instance replication, Redis pub/sub, or Tailscale + SQLite sync
-- cluster-wide memory source-of-truth responsibilities; external PostgreSQL/shared backends should own that layer
-- automatic Hermes skill creation or automatic `SKILL.md` writes
-- full holographic memory clone
-- Grafana/Prometheus HTTP service without a concrete deployment need
+V1 focuses on the local recall layer that every Hermes runtime can inspect and operate directly:
+
+- current-turn recall over the active query
+- SQLite truth storage for provider-owned memory records
+- LanceDB as a rebuildable semantic companion
+- durable scoped recall for `user`/`memory`/`project`/`ops` facts
+- local isolation for `general` scratch captures
+- conservative governance primitives such as dedupe, trust metadata, decay review, relations, and explicit operator tools
+- offline-capable bootstrap through deterministic local embeddings
+- bridge-friendly export/import surfaces for deployments with a central shared backend
+
+Procedural knowledge packaging stays with Hermes native skills. Deployment-wide authority, tenancy, and synchronization policies stay with the external systems that already own those concerns. Operational dashboards can be built on top of the CLI/JSON health outputs when a deployment needs them.
 
 ## Layer split
 

@@ -36,17 +36,18 @@ This replaces the old `lancepro` naming, which was misleading because the earlie
 - **Operator actions fail closed**: cross-scope export/dedupe/govern/repair paths require explicit maintenance mode.
 - **Install remains practical**: hosted embeddings are used when configured, while deterministic `local-hash` keeps no-key bootstrap available.
 
-### Product boundaries and non-goals
+### Deployment boundaries
 
-`scope-recall` is the local per-Hermes recall layer, not a cluster-wide memory authority. Deployments that already run a central shared backend such as PostgreSQL should keep that system as the cross-agent source of truth and use `scope-recall` through explicit import/export/tool boundaries.
+`scope-recall` is the local per-Hermes recall layer. In multi-agent deployments that already run a central shared backend such as PostgreSQL, keep that backend as the cross-agent source of truth and connect it to `scope-recall` through explicit import/export/tool boundaries.
 
-Non-goals for this plugin:
+The V1 shape is intentionally simple:
 
-- no built-in cross-instance replication, Redis pub/sub, or Tailscale + SQLite memory sync
-- no automatic Hermes skill creation or automatic `SKILL.md` writes; Hermes native skills own procedural knowledge packaging
-- no full holographic-memory clone or always-on LLM governance classifier by default
-- no Grafana/Prometheus HTTP service unless a concrete deployment need appears
-- no propagation of `general` scratch, raw system/tool output, or secret-like records into shared backends
+- SQLite remains the local truth store for provider-owned memory records.
+- LanceDB remains a rebuildable semantic retrieval companion.
+- Durable `user`/`memory`/`project`/`ops` facts can be bridged deliberately across systems.
+- Local `general` scratch, raw system/tool output, and secret-like records stay inside the current runtime scope unless an operator promotes a sanitized durable fact.
+- Hermes native skills remain the place for procedural knowledge packaging.
+- Operational visibility is exposed through doctor, repair, inspect, explain, and benchmark utilities; deployment-specific dashboards can consume those outputs when needed.
 
 For external shared-memory bridge guidance, see [`docs/external-shared-memory.md`](docs/external-shared-memory.md).
 
