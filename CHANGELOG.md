@@ -2,6 +2,14 @@
 
 All notable changes to `scope-recall` will be documented in this file.
 
+## [1.0.9] - 2026-06-07
+
+### Added
+- Added a `MiniMaxEmbedder` (provider: `minimax`) and a `build_embedder` route for the MiniMax `embo-01` embedding endpoint. The endpoint is non-OpenAI-compatible (`texts` plural, `type: "db" | "query"`, `vectors` reply), so the embedder talks to it directly via `urllib`. 1536 dimensions are registered in `_KNOWN_EMBEDDING_DIMS` for both `embo-01` and the `minimax-embedding` alias. Multi-key rotation mirrors the existing `OpenAICompatibleEmbedder` pattern (last-error re-raise, no `RuntimeError` wrapping) so failures surface verbatim and easier to debug.
+
+### Changed
+- Bumped package, plugin, release-check metadata, README, and stability docs to `1.0.9`.
+
 ## [1.0.8] - 2026-06-03
 
 ### Added
