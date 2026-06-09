@@ -442,6 +442,18 @@ def test_release_gate_runs_ruff_check():
 
 
 
+def test_ci_installs_release_gate_lint_dependency():
+    import tomllib
+
+    pyproject = tomllib.loads((PLUGIN_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dev_deps = pyproject["project"]["optional-dependencies"]["dev"]
+    workflow = (PLUGIN_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "ruff" in dev_deps
+    assert '".[lancedb,dev]"' in workflow
+
+
+
 def test_default_embedder_targets_gemini_openai_compatible_api():
     embedder = build_embedder(
         {

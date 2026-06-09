@@ -32,6 +32,11 @@ all = [
   "lancedb>=0.30.2",
   "pyarrow>=24,<25",
 ]
+dev = [
+  "pytest",
+  "ruff",
+  "wheel",
+]
 
 [project.urls]
 Homepage = "https://github.com/410979729/scope-recall"
