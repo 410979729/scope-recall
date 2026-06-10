@@ -1,4 +1,4 @@
-# scope-recall
+# Scope Recall for Hermes
 
 <div align="center">
 
@@ -8,7 +8,7 @@
 
 Current-turn recall · Permanent shared memory · Nightly workflow digest · Local scratch scopes · SQLite truth · LanceDB/SQLite companion · Hybrid retrieval
 
-[![CI](https://github.com/410979729/scope-recall/actions/workflows/ci.yml/badge.svg)](https://github.com/410979729/scope-recall/actions/workflows/ci.yml)
+[![CI](https://github.com/410979729/scope-recall-hermes/actions/workflows/ci.yml/badge.svg)](https://github.com/410979729/scope-recall-hermes/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Hermes Plugin](https://img.shields.io/badge/Hermes-Memory%20Provider-blue)](https://hermes-agent.nousresearch.com/docs)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](pyproject.toml)
@@ -17,6 +17,8 @@ Current-turn recall · Permanent shared memory · Nightly workflow digest · Loc
 </div>
 
 `scope-recall` is a Hermes local memory provider built for **current-turn recall** and **permanent semantic memory**. Durable user/project/ops/memory facts are shared across windows/chats for the same user + agent identity; raw general turn captures stay local to the current chat/thread/session.
+
+This repository, `scope-recall-hermes`, is the Hermes implementation. The Python package name and Hermes plugin ID intentionally remain `scope-recall` for runtime compatibility. The OpenClaw sibling implementation lives at [`scope-recall-openclaw`](https://github.com/410979729/scope-recall-openclaw).
 
 Version `1.0.9` continues the first stable V1 release line for the documented interfaces, packaged as a public release candidate for broader field testing. It keeps the V1 compatibility contract in [`docs/stability.md`](docs/stability.md) while adding a native-free `sqlite-bruteforce` vector backend, optional LanceDB dependencies, and a documented naming/upstream-recommendation path.
 
@@ -130,7 +132,7 @@ This pairing is useful for long-lived Hermes agents where you want both scoped r
 
 ```bash
 cd "$HERMES_HOME/plugins"
-git clone https://github.com/410979729/scope-recall.git scope-recall
+git clone https://github.com/410979729/scope-recall-hermes.git scope-recall
 cd scope-recall
 python -m pip install -e ".[lancedb]"
 ```
