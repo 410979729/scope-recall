@@ -58,6 +58,7 @@ from .schemas import (
     SCOPE_RECALL_SEARCH_SCHEMA,
     SCOPE_RECALL_STATS_SCHEMA,
     SCOPE_RECALL_STORE_SCHEMA,
+    SCOPE_RECALL_STORE_SECRET_INDEX_SCHEMA,
     SCOPE_RECALL_UPDATE_SCHEMA,
 )
 from .scope import accessible_scope_ids, build_scope_id, build_shared_pool_scope_id, build_shared_scope_id
@@ -376,6 +377,7 @@ class ScopeRecallMemoryProvider(MemoryProvider):
             return []
         schemas = [
             SCOPE_RECALL_STORE_SCHEMA,
+            SCOPE_RECALL_STORE_SECRET_INDEX_SCHEMA,
             SCOPE_RECALL_SEARCH_SCHEMA,
             SCOPE_RECALL_CONTEXT_SCHEMA,
             SCOPE_RECALL_PROBE_SCHEMA,

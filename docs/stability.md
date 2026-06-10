@@ -1,6 +1,6 @@
 # Scope Recall V1 stability contract
 
-`scope-recall` 1.0.9 is the native-free vector backend and standalone-provider polish patch release for the Hermes Scope Recall memory provider V1 line.
+`scope-recall` 1.0.10 is the artifact-anchor and secret-index patch release for the Hermes Scope Recall memory provider V1 line.
 
 This document defines the stable V1 compatibility surface and the areas that may evolve in patch or minor releases.
 
@@ -57,6 +57,7 @@ V1 keeps these behavior boundaries stable:
 - maintenance tools (`scope_recall_dedupe`, `scope_recall_govern`, `scope_recall_hygiene`, and `scope_recall_repair`) are hidden and fail closed unless `maintenance_tools_enabled=true`
 - `scope_recall_hygiene` is read-only and never performs cleanup; operators must explicitly run a separate delete/merge/dedupe action after reviewing its output
 - `scope_recall_export` is available for scoped exports by default; `scope_only=false` requires `maintenance_tools_enabled=true`
+- `scope_recall_store_secret_index` may store searchable credential indexes, vault references, and non-reversible fingerprint prefixes, but plaintext secret values must not be stored in SQLite content, metadata, FTS, vector text, exports, logs, or chat replies
 - durable `user`/`memory`/`project`/`ops` rows are shared across windows/chats for the same platform + agent workspace + agent identity + user id
 - `general` scratch rows remain local to the current chat/thread or gateway session key
 - scoped tool actions operate on the current accessible scope set: local runtime scope plus shared durable scope
@@ -67,6 +68,7 @@ V1 keeps these behavior boundaries stable:
 The following tool names are stable for V1:
 
 - `scope_recall_store`
+- `scope_recall_store_secret_index`
 - `scope_recall_search`
 - `scope_recall_context`
 - `scope_recall_probe`

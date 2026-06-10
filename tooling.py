@@ -9,6 +9,7 @@ from tools.registry import tool_error
 
 from .capture_filters import CaptureFilterResult, should_capture_text
 from .graph import clamp_float
+from .secret_index import build_secret_index
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class ScopeRecallToolService:
         normalized = self.normalize_tool_name(tool_name)
         handlers: dict[str, Callable[[dict[str, Any]], str]] = {
             "scope_recall_store": self._handle_store,
+            "scope_recall_store_secret_index": self._handle_store_secret_index,
             "scope_recall_search": self._handle_search,
             "scope_recall_context": self._handle_context,
             "scope_recall_probe": self._handle_probe,
@@ -110,6 +112,50 @@ class ScopeRecallToolService:
                 "target": target,
                 "scope_mode": scope_mode,
                 "receipt": self._receipt("promoted" if inserted else outcome, target=target, id=memory_id, scope_mode=scope_mode),
+            }
+        )
+
+    def _handle_store_secret_index(self, args: dict[str, Any]) -> str:
+        content, metadata = build_secret_index(args)
+        target = str(args.get("target") or "ops").strip().lower()
+        if target not in {"memory", "project", "ops"}:
+            target = "ops"
+        scope_mode = self.provider._scope_mode_for(target, "secret-index")
+        filter_result = self._storage_filter(content)
+        if not filter_result.allowed:
+            return tool_error(
+                "secret index content is not suitable for storage after redaction",
+                skipped=True,
+                skip_reason=filter_result.reason,
+                receipt=self._receipt("rejected_sensitive", target=target, scope_mode=scope_mode, reason=filter_result.reason),
+            )
+        memory_id, inserted, outcome = self.provider._store_now(
+            content=content,
+            source="secret-index",
+            target=target,
+            session_id=self.provider._session_id,
+            metadata=metadata,
+            semantic_merge=False,
+        )
+        return self._json(
+            {
+                "stored": bool(inserted),
+                "duplicate": outcome == "duplicate",
+                "merged": outcome == "merged",
+                "skipped": outcome == "skipped",
+                "id": memory_id,
+                "target": target,
+                "scope_mode": scope_mode,
+                "secret_value_stored": False,
+                "vault_ref": metadata.get("vault_ref", ""),
+                "receipt": self._receipt(
+                    "secret_index_promoted" if inserted else outcome,
+                    target=target,
+                    id=memory_id,
+                    scope_mode=scope_mode,
+                    secret_value_stored=False,
+                    vault_ref=metadata.get("vault_ref", ""),
+                ),
             }
         )
 

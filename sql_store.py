@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .artifacts import enrich_content_with_artifact_anchors, merge_artifact_metadata
 from .gating import compact_text, dedup_key
 from .governance import classify_memory, merge_metadata
 from .graph import backfill_memory_entities, ensure_graph_schema, sync_memory_entities
@@ -167,6 +168,7 @@ def store_row(
     metadata: str = "{}",
     allow_duplicate: bool = False,
 ) -> tuple[str, str, str, bool]:
+    content = enrich_content_with_artifact_anchors(content)
     now = now_iso()
     summary = compact_text(content, 220)
     key = dedup_key(content)
@@ -187,6 +189,7 @@ def store_row(
             return str(existing["id"]), str(existing["summary"]), now, False
 
     metadata_payload = merge_metadata(dict(classify_memory(content, target, source)), metadata)
+    metadata_payload = merge_artifact_metadata(metadata_payload, content)
     metadata_json = json.dumps(metadata_payload, ensure_ascii=False, sort_keys=True)
 
     conn.execute(
@@ -237,6 +240,7 @@ def update_row(
     scope_id: str | None = None,
     scope_ids: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[bool, str, str]:
+    content = enrich_content_with_artifact_anchors(content)
     if scope_ids is not None:
         clean_scope_ids = [str(item) for item in scope_ids if str(item)]
         if not clean_scope_ids:
@@ -261,6 +265,7 @@ def update_row(
     except Exception:
         pass
     metadata_payload.update(classify_memory(content, new_target, str(row["source"])))
+    metadata_payload = merge_artifact_metadata(metadata_payload, content)
     metadata_json = json.dumps(metadata_payload, ensure_ascii=False, sort_keys=True)
     conn.execute(
         """

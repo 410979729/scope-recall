@@ -51,8 +51,18 @@ def test_readme_documents_hermes_venv_test_command():
     assert "Plain `pytest` from an unrelated Python environment" in readme
 
 
+def test_readme_documents_artifact_anchors_and_secret_indexes():
+    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "Artifact anchors:" in readme
+    assert "scope_recall_store_secret_index" in readme
+    assert "secret_value_stored" in readme
+    assert "plaintext secret" in readme
+    assert "SQL/FTS/vector" in readme
+
 
 def test_doctor_script_reports_source_versions():
+
     result = subprocess.run(
         [sys.executable, str(DOCTOR_PATH), "--source-root", str(PLUGIN_ROOT)],
         text=True,

@@ -31,6 +31,20 @@ def test_secret_like_text_is_rejected():
     assert result.reason == "secret-like-content"
 
 
+def test_secret_assignment_with_is_is_rejected():
+    result = should_capture_text("The token is abcdefghijklmnopqrstuvwxyz should not be retained.")
+
+    assert result.allowed is False
+    assert result.reason == "secret-like-content"
+
+
+def test_secret_index_like_multiline_metadata_is_not_cross_line_rejected():
+    result = should_capture_text("Secret index: Scope Recall smoke dummy credential\nKind: api_key\nVault ref: vault://smoke/scope-recall/dummy")
+
+    assert result.allowed is True
+    assert result.reason == ""
+
+
 def test_continuation_handoff_line_is_rejected():
     result = should_capture_text("Conversation continues after context compression. Resume the active task from the summary.")
 

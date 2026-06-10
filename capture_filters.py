@@ -35,8 +35,8 @@ DEFAULT_CAPTURE_SKIP_PATTERNS: tuple[str, ...] = (
 SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Common assignment forms: api_key=..., api key: ..., token is ..., private-key = ...
     re.compile(
-        r"(?:api[_\s-]?key|token|secret|password|passwd|credential(?:[_\s-]?[a-z0-9_]+)?|private[_\s-]?key)"
-        r"\s*(?::|=|is|是)\s*[^\s]+",
+        r"(?:api[_ \t-]?key|token|secret|password|passwd|credential(?:[_ \t-]?[a-z0-9_]+)?|private[_ \t-]?key)"
+        r"(?:[ \t]*(?::|=|是)[ \t]*|[ \t]+is[ \t]+)[^\s]+",
         re.IGNORECASE,
     ),
     # Provider-specific and transport token forms that often appear without labels.

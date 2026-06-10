@@ -19,7 +19,7 @@ import tempfile
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE_VERSION = "1.0.9"
+PACKAGE_VERSION = "1.0.10"
 WHEEL_DATA_PREFIX = f"scope_recall-{PACKAGE_VERSION}.data/data"
 GENERATED_DIRS = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "build", "dist", ".venv"}
 EXTERNAL_TEST_DIRS = {".hermes-agent-src"}
@@ -56,6 +56,7 @@ REQUIRED_SOURCE_FILES = {
 }
 REQUIRED_WHEEL = {
     "scope_recall/__init__.py",
+    "scope_recall/artifacts.py",
     "scope_recall/provider.py",
     "scope_recall/capture_llm.py",
     "scope_recall/capture_filters.py",
@@ -64,6 +65,7 @@ REQUIRED_WHEEL = {
     "scope_recall/governance.py",
     "scope_recall/prompting.py",
     "scope_recall/schemas.py",
+    "scope_recall/secret_index.py",
     "scope_recall/hygiene.py",
     "scope_recall/nightly_digest.py",
     "scope_recall/sqlite_vector_store.py",
@@ -90,6 +92,7 @@ REQUIRED_WHEEL = {
 }
 STABLE_TOOL_NAMES = {
     "scope_recall_store",
+    "scope_recall_store_secret_index",
     "scope_recall_search",
     "scope_recall_context",
     "scope_recall_probe",

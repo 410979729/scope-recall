@@ -20,7 +20,7 @@ Current-turn recall · Permanent shared memory · Nightly workflow digest · Loc
 
 This repository, `scope-recall-hermes`, is the Hermes implementation. The Python package name and Hermes plugin ID intentionally remain `scope-recall` for runtime compatibility. The OpenClaw sibling implementation lives at [`scope-recall-openclaw`](https://github.com/410979729/scope-recall-openclaw).
 
-Version `1.0.9` continues the first stable V1 release line for the documented interfaces, packaged as a public release candidate for broader field testing. It keeps the V1 compatibility contract in [`docs/stability.md`](docs/stability.md) while adding a native-free `sqlite-bruteforce` vector backend, optional LanceDB dependencies, and a documented naming/upstream-recommendation path.
+Version `1.0.10` continues the first stable V1 release line for the documented interfaces, packaged as a public release candidate for broader field testing. It keeps the V1 compatibility contract in [`docs/stability.md`](docs/stability.md) while adding structured external-artifact anchors and a safe secret-index tool that stores vault references without putting plaintext credentials into SQL/FTS/vector recall.
 
 It uses a **two-layer design**:
 
@@ -47,7 +47,7 @@ The V1 shape is intentionally simple:
 - SQLite remains the local truth store for provider-owned memory records.
 - the configured vector backend remains a rebuildable semantic retrieval companion.
 - Durable `user`/`memory`/`project`/`ops` facts can be bridged deliberately across systems.
-- Local `general` scratch, raw system/tool output, and secret-like records stay inside the current runtime scope unless an operator promotes a sanitized durable fact.
+- Local `general` scratch, raw system/tool output, and plaintext secret values stay outside durable recall; explicit `scope_recall_store_secret_index` rows may store only searchable credential indexes such as service/account/purpose/vault references and non-reversible fingerprints.
 - Hermes native skills remain the place for procedural knowledge packaging.
 - Operational visibility is exposed through doctor, repair, inspect, explain, and benchmark utilities; deployment-specific dashboards can consume those outputs when needed.
 
@@ -260,6 +260,46 @@ Provider aliases `local-model`, `local-embedding`, and `huggingface` resolve to 
 - **Accessible scope set**: normal recall and scoped tool actions can see the current local scope plus the shared durable scope; they cannot see another user, sibling agent identity, or another local chat/thread/session scratch scope.
 
 This aims at the common expectation: "if I gave the agent durable information before, it should remember it later," without making every scratch line globally visible forever.
+
+---
+
+## Detailed recall anchors and secret indexes
+
+### External artifact anchors
+
+Ordinary durable writes preserve stable external lookup handles. When a memory contains a GitHub issue, PR, commit, release, repository URL, or other URL, `scope-recall` appends a deterministic anchor block and stores structured artifact metadata.
+
+Example stored text:
+
+```text
+Hermes upstream recommendation request is tracked in the linked issue.
+
+Artifact anchors: GitHub issue NousResearch/hermes-agent#42864 (https://github.com/NousResearch/hermes-agent/issues/42864)
+```
+
+The same row also carries `artifacts` metadata with fields such as `kind`, `repo`, `number`, `commit`, `tag`, and `url`. This keeps future recall from relying on vague summaries such as "submitted the RFC" when the useful retrieval key is the exact issue/PR/release/commit handle.
+
+Nightly digest uses the same deterministic artifact extraction in addition to its LLM/heuristic summary logic, so source conversations with external handles retain those anchors even when the human-readable summary is compact.
+
+### Secret indexes, not plaintext secret storage
+
+`scope_recall_store_secret_index` stores a searchable credential index without putting plaintext secret values into the ordinary recall surface. Store the real password/token/API key/private key in an external vault or keyring, then store only the locator and safe metadata in `scope-recall`.
+
+Example tool payload shape:
+
+```json
+{
+  "label": "production deploy credential",
+  "secret_type": "password",
+  "service": "example-service",
+  "account": "deploy-user",
+  "vault_ref": "vault://ops/example-service/deploy-user",
+  "rotation_due": "quarterly",
+  "notes": "Use only for authorized deployment maintenance."
+}
+```
+
+Returned/stored metadata includes `secret_value_stored: false`. If a caller supplies `secret_value`, it is used only to compute a short non-reversible fingerprint prefix; the plaintext secret is not written to SQL/FTS/vector text, metadata, exports, logs, or chat replies.
 
 ---
 

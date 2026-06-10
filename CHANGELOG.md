@@ -2,6 +2,22 @@
 
 All notable changes to `scope-recall` will be documented in this file.
 
+## [1.0.10] - 2026-06-10
+
+### Added
+- Added deterministic external-artifact enrichment for direct memory writes and nightly digest candidates. GitHub issues, PRs, commits, releases, repositories, and URLs now get a human-readable `Artifact anchors:` block plus structured `artifacts` metadata, derived entities, and tags.
+- Added `scope_recall_store_secret_index`, an explicit credential-index tool that stores searchable service/account/purpose/vault-reference metadata without storing plaintext secret values in SQLite, FTS, vector text, exports, logs, or chat replies.
+- Added regression coverage for direct GitHub issue anchors, nightly digest artifact preservation, and secret-index export hygiene.
+
+### Changed
+- Bumped package, plugin, README, stability contract, and release-check metadata to `1.0.10`.
+- Updated project URLs to the Hermes-specific repository slug `410979729/scope-recall-hermes` while keeping the runtime package and plugin ID as `scope-recall`.
+- Strengthened nightly digest extraction instructions so external artifacts retain repo/name, issue/PR/release/commit identifiers, exact URLs, and available status/date/author/next-step anchors.
+
+### Fixed
+- Fixed vague memory records that mentioned external work without durable lookup anchors, forcing later sessions to rediscover issue/PR/release URLs from scratch.
+- Fixed a secret-index false positive where multiline credential metadata such as a label ending in `credential` followed by `Kind: api_key` could be rejected as `secret-like-content` even though no plaintext secret was stored.
+
 ## [1.0.9] - 2026-06-09
 
 ### Added

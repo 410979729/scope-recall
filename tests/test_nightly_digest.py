@@ -152,3 +152,31 @@ def test_dry_run_does_not_write_digest_rows(tmp_path):
     assert result["ok"] is True
     assert result["status"] == "dry_run"
     assert not (hermes_home / "scope-recall" / "memory.sqlite3").exists()
+
+
+def test_heuristic_digest_preserves_external_artifact_anchors(tmp_path):
+    day = date(2026, 6, 1)
+    hermes_home = tmp_path / "hermes"
+    hermes_home.mkdir()
+    _write_config(hermes_home)
+    _create_state_db(
+        hermes_home / "state.db",
+        day,
+        content_suffix="上游申请 https://github.com/NousResearch/hermes-agent/issues/42864 标题 [Show & Tell/RFC] scope-recall standalone memory provider。",
+    )
+
+    result = run_digest(DigestOptions(hermes_home=hermes_home, digest_date=day, extractor="heuristic"))
+
+    assert result["ok"] is True
+    conn = sqlite3.connect(hermes_home / "scope-recall" / "memory.sqlite3")
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("SELECT content, metadata FROM memories").fetchone()
+        assert row is not None
+        assert "Artifact anchors:" in row["content"]
+        assert "NousResearch/hermes-agent#42864" in row["content"]
+        metadata = json.loads(row["metadata"])
+        assert metadata["artifacts"][0]["kind"] == "github_issue"
+        assert metadata["artifacts"][0]["number"] == 42864
+    finally:
+        conn.close()
