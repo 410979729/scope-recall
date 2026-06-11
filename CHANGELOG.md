@@ -2,13 +2,48 @@
 
 All notable changes to `scope-recall` will be documented in this file.
 
-## [1.0.9] - 2026-06-07
+## [1.0.11] - 2026-06-11
 
 ### Added
-- Added a `MiniMaxEmbedder` (provider: `minimax`) and a `build_embedder` route for the MiniMax `embo-01` embedding endpoint. The endpoint is non-OpenAI-compatible (`texts` plural, `type: "db" | "query"`, `vectors` reply), so the embedder talks to it directly via `urllib`. 1536 dimensions are registered in `_KNOWN_EMBEDDING_DIMS` for both `embo-01` and the `minimax-embedding` alias. Multi-key rotation mirrors the existing `OpenAICompatibleEmbedder` pattern (last-error re-raise, no `RuntimeError` wrapping) so failures surface verbatim and easier to debug.
+- Added a `MiniMaxEmbedder` (provider: `minimax`) and a `build_embedder` route for the MiniMax `embo-01` embedding endpoint. The endpoint is non-OpenAI-compatible (`texts` plural, `type: "db" | "query"`, `vectors` reply), so the embedder talks to it directly via `urllib`.
+- Added MiniMax document/query request-type separation: vector indexing/upserts use `db`, while vector search uses `query` through the embedder query path.
+- Added optional MiniMax `GroupId` support for accounts that still require it, with `group_id` / `group_id_env` configuration.
 
 ### Changed
-- Bumped package, plugin, release-check metadata, README, and stability docs to `1.0.9`.
+- Bumped package, plugin, release-check metadata, README, and stability docs to `1.0.11`.
+
+## [1.0.10] - 2026-06-10
+
+### Added
+- Added deterministic external-artifact enrichment for direct memory writes and nightly digest candidates. GitHub issues, PRs, commits, releases, repositories, and URLs now get a human-readable `Artifact anchors:` block plus structured `artifacts` metadata, derived entities, and tags.
+- Added `scope_recall_store_secret_index`, an explicit credential-index tool that stores searchable service/account/purpose/vault-reference metadata without storing plaintext secret values in SQLite, FTS, vector text, exports, logs, or chat replies.
+- Added regression coverage for direct GitHub issue anchors, nightly digest artifact preservation, and secret-index export hygiene.
+
+### Changed
+- Bumped package, plugin, README, stability contract, and release-check metadata to `1.0.10`.
+- Updated project URLs to the Hermes-specific repository slug `410979729/scope-recall-hermes` while keeping the runtime package and plugin ID as `scope-recall`.
+- Strengthened nightly digest extraction instructions so external artifacts retain repo/name, issue/PR/release/commit identifiers, exact URLs, and available status/date/author/next-step anchors.
+
+### Fixed
+- Fixed vague memory records that mentioned external work without durable lookup anchors, forcing later sessions to rediscover issue/PR/release URLs from scratch.
+- Fixed a secret-index false positive where multiline credential metadata such as a label ending in `credential` followed by `Kind: api_key` could be rejected as `secret-like-content` even though no plaintext secret was stored.
+
+## [1.0.9] - 2026-06-09
+
+### Added
+- Added the `sqlite-bruteforce` vector backend for non-AVX or native-dependency-sensitive hosts. It stores rebuildable vector companion rows in `$HERMES_HOME/scope-recall/vector.sqlite3` while keeping `$HERMES_HOME/scope-recall/memory.sqlite3` as the truth source.
+- Added `docs/naming.md` to define the public `scope-recall` spelling versus Python/tool/config identifiers that use `scope_recall`.
+- Added `docs/hermes-upstream-recommendation-plan.md` with the standalone-provider checklist and Hermes upstream recommendation route.
+- Added regression coverage for native-free vector imports, `sqlite-bruteforce` runtime sync/search, doctor reporting, and repair-script rebuilds.
+
+### Changed
+- Moved `lancedb`/`pyarrow` to the `lancedb` optional dependency extra. Default package import no longer requires native vector dependencies, while CI and LanceDB installs use `.[lancedb]`.
+- Extended `vector.backend` configuration, runtime dispatch, doctor diagnostics, release checks, and repair tooling to cover both `lancedb` and `sqlite-bruteforce` companions.
+- Updated installation docs to distinguish the recommended LanceDB path from the native-free SQLite fallback path.
+
+### Fixed
+- Fixed the no-AVX/native-import failure mode where importing vector runtime modules could fail before the operator had a chance to select a safer backend.
+- Fixed the #4 naming ambiguity by documenting where each spelling is authoritative instead of performing a risky whole-repository rename.
 
 ## [1.0.8] - 2026-06-03
 
@@ -143,7 +178,7 @@ All notable changes to `scope-recall` will be documented in this file.
 ### Changed
 - Promoted package and plugin metadata from `0.2.0` to `1.0.0`, while keeping the public package classifier at beta/release-candidate maturity until broader field use.
 - Aligned the public Python support floor and CI matrix with the current Hermes runtime requirement of Python 3.11+.
-- Tightened V1 documentation around SQLite truth ownership, LanceDB companion-cache rebuildability, and non-goals versus OpenClaw `memory-lancedb-pro` parity.
+- Tightened V1 documentation around SQLite truth ownership, LanceDB companion-cache rebuildability, and OpenClaw migration/compatibility boundaries.
 - Changed GitHub Actions to run `scripts/check.release.py` as the remote CI gate so CI matches the local V1 release audit.
 - Replaced agent-specific author/copyright wording with project contributor wording and added `SECURITY.md` plus a `py.typed` marker for public-release hygiene.
 - Fixed scope id serialization to avoid delimiter-collision between user/chat/thread/session components and aligned `scope_recall_dedupe(scope_only=false)` with its documented cross-scope semantics.

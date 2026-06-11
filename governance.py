@@ -272,7 +272,11 @@ def merge_metadata(metadata_payload: dict[str, Any], raw_metadata: Any) -> dict[
             metadata_payload["memory_type"] = normalize_memory_type(value, str(metadata_payload.get("memory_type") or "factual"))
         elif meta_key in {"importance", "trust"}:
             metadata_payload[meta_key] = clamp_float(value, default=float(metadata_payload.get(meta_key) or 0.5))
-        elif meta_key in {"kind", "lifecycle", "authority", "confidence", "sensitivity", "expires_at", "category", "tier", "scope_mode"}:
+        elif meta_key == "sensitivity":
+            incoming = str(value or "").strip().lower()
+            if incoming in {"sensitive", "secret-index"}:
+                metadata_payload["sensitivity"] = incoming
+        elif meta_key in {"kind", "lifecycle", "authority", "confidence", "expires_at", "category", "tier", "scope_mode"}:
             continue
         else:
             metadata_payload[meta_key] = value

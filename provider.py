@@ -37,7 +37,7 @@ from .memory_ops import (
     update_memory,
 )
 from .migration import migrate_legacy_scope_recall_storage
-from .models import RuntimeScope, recall_scope_mode
+from .models import RecallItem, RuntimeScope, recall_scope_mode
 from .recall import RecallService
 from .prompting import render_current_turn_recall
 from .schemas import (
@@ -58,6 +58,7 @@ from .schemas import (
     SCOPE_RECALL_SEARCH_SCHEMA,
     SCOPE_RECALL_STATS_SCHEMA,
     SCOPE_RECALL_STORE_SCHEMA,
+    SCOPE_RECALL_STORE_SECRET_INDEX_SCHEMA,
     SCOPE_RECALL_UPDATE_SCHEMA,
 )
 from .scope import accessible_scope_ids, build_scope_id, build_shared_pool_scope_id, build_shared_scope_id
@@ -65,7 +66,6 @@ from .sql_store import ensure_schema
 from .storage_views import search_curated_memories, search_db_memories, search_vector_memories
 from .tooling import ScopeRecallToolService
 from .vector_runtime import setup_vector_layer
-from .vector_store import LanceVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class ScopeRecallMemoryProvider(MemoryProvider):
         self._plugin_dir = Path(__file__).resolve().parent
         self._last_recall_turns: dict[str, int] = {}
         self._embedder: BaseEmbedder | None = None
-        self._vector_store: LanceVectorStore | None = None
+        self._vector_store: Any | None = None
         self._vector_enabled = False
         self._vector_ready = False
         self._vector_status = "disabled"
@@ -142,9 +142,15 @@ class ScopeRecallMemoryProvider(MemoryProvider):
             },
             {
                 "key": "vector.enabled",
-                "description": "Enable LanceDB vector companion layer",
+                "description": "Enable the rebuildable vector companion layer",
                 "default": "true",
                 "choices": ["true", "false"],
+            },
+            {
+                "key": "vector.backend",
+                "description": "Vector companion backend: LanceDB for ANN search, or sqlite-bruteforce for non-AVX/native-free hosts",
+                "default": "lancedb",
+                "choices": ["lancedb", "sqlite-bruteforce"],
             },
             {
                 "key": "vector.embedder.provider",
@@ -214,7 +220,7 @@ class ScopeRecallMemoryProvider(MemoryProvider):
     def system_prompt_block(self) -> str:
         suffix = ""
         if self._vector_enabled and self._vector_ready:
-            suffix = " Hybrid lexical+vector recall is enabled with a local LanceDB companion index."
+            suffix = f" Hybrid lexical+vector recall is enabled with a local {self._vector_backend} companion index."
         elif self._vector_enabled and not self._vector_ready:
             suffix = f" Vector companion requested but not active ({self._vector_message or self._vector_status})."
         return (
@@ -371,6 +377,7 @@ class ScopeRecallMemoryProvider(MemoryProvider):
             return []
         schemas = [
             SCOPE_RECALL_STORE_SCHEMA,
+            SCOPE_RECALL_STORE_SECRET_INDEX_SCHEMA,
             SCOPE_RECALL_SEARCH_SCHEMA,
             SCOPE_RECALL_CONTEXT_SCHEMA,
             SCOPE_RECALL_PROBE_SCHEMA,

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .artifacts import artifact_anchor_block, extract_artifacts
 from .capture_filters import should_capture_text
 from .config import load_runtime_config
 from .gating import clean_text, compact_text, dedup_key
@@ -409,8 +410,14 @@ def session_chunks(bundle: SessionBundle, *, chunk_chars: int, max_session_chars
     return chunks
 
 
+def bundle_artifact_anchor_block(bundle: SessionBundle) -> str:
+    text = "\n".join(message.content for message in bundle.messages if message.role in {"user", "assistant"})
+    return artifact_anchor_block(extract_artifacts(text))
+
+
 def heuristic_candidates(bundle: SessionBundle) -> list[DigestCandidate]:
     candidates: list[DigestCandidate] = []
+    artifact_block = bundle_artifact_anchor_block(bundle)
     user_texts = [message.content for message in bundle.messages if message.role == "user" and message.content]
     assistant_tail = [message.content for message in bundle.messages if message.role == "assistant" and message.content][-3:]
     if bundle.is_task and bundle.tool_names:
@@ -423,6 +430,8 @@ def heuristic_candidates(bundle: SessionBundle) -> list[DigestCandidate]:
             parts.append(f"关键命令/检查包括 {commands}。")
         if result:
             parts.append(f"结果摘要：{result}")
+        if artifact_block:
+            parts.append(artifact_block)
         candidates.append(
             DigestCandidate(
                 content=compact_text(" ".join(parts), 900),
@@ -443,9 +452,12 @@ def heuristic_candidates(bundle: SessionBundle) -> list[DigestCandidate]:
     elif user_texts:
         summary = compact_text(" / ".join(user_texts[-3:]), 700)
         if len(summary) >= 60 and TASK_HINT_RE.search(summary):
+            content = f"对话重点摘要：{summary}"
+            if artifact_block:
+                content = f"{content}\n\n{artifact_block}"
             candidates.append(
                 DigestCandidate(
-                    content=f"对话重点摘要：{summary}",
+                    content=content,
                     target="memory",
                     memory_type="summary",
                     importance=0.5,
@@ -475,6 +487,7 @@ def build_prompt(bundle: SessionBundle, chunk: str, existing_context: list[str])
     return (
         "你是 scope-recall 的夜间记忆整理器。阅读当天对话片段，提取值得长期保存的记忆。\n"
         "硬规则：不要保存 system/tool 原文、不要保存 token/API key/password/cookie/private key、不要保存流水账。\n"
+        "关键外部工件必须保留可检索锚点：repo/name、issue/PR/release/commit 编号、标题、URL、记录时状态/日期/作者/下一步（能从片段得出才写；当前状态需 live check）。\n"
         "任务型对话要额外提取可复用 workflow/tool-chain：用过哪些工具类别、关键检查、验证方式、踩坑。只写脱敏摘要。\n"
         "如果已有记忆已经完整覆盖，请输出 action=skip；如果已有记忆不够详细，请输出 action=update 并给 existing_hint。\n"
         "输出只能是 JSON 数组，每项字段：action, content, target, memory_type, importance, confidence, entities, tags, reason, existing_hint。\n"

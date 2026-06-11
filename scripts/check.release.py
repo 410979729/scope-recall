@@ -19,7 +19,7 @@ import tempfile
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE_VERSION = "1.0.9"
+PACKAGE_VERSION = "1.0.11"
 WHEEL_DATA_PREFIX = f"scope_recall-{PACKAGE_VERSION}.data/data"
 GENERATED_DIRS = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "build", "dist", ".venv"}
 EXTERNAL_TEST_DIRS = {".hermes-agent-src"}
@@ -45,14 +45,18 @@ REQUIRED_SOURCE_FILES = {
     "docs/differences-from-memory-lancedb-pro.md",
     "docs/external-shared-memory.md",
     "docs/stability.md",
+    "docs/naming.md",
+    "docs/hermes-upstream-recommendation-plan.md",
     "scripts/import.openclaw.memory_lancedb_pro.py",
     "scripts/nightly-digest.py",
     "scripts/repair.vector_index.py",
+    "scripts/report.hygiene.py",
     "scripts/doctor.py",
     "py.typed",
 }
 REQUIRED_WHEEL = {
     "scope_recall/__init__.py",
+    "scope_recall/artifacts.py",
     "scope_recall/provider.py",
     "scope_recall/capture_llm.py",
     "scope_recall/capture_filters.py",
@@ -61,8 +65,10 @@ REQUIRED_WHEEL = {
     "scope_recall/governance.py",
     "scope_recall/prompting.py",
     "scope_recall/schemas.py",
+    "scope_recall/secret_index.py",
     "scope_recall/hygiene.py",
     "scope_recall/nightly_digest.py",
+    "scope_recall/sqlite_vector_store.py",
     "scope_recall/py.typed",
     f"{WHEEL_DATA_PREFIX}/plugin.yaml",
     f"{WHEEL_DATA_PREFIX}/config.json",
@@ -76,13 +82,17 @@ REQUIRED_WHEEL = {
     f"{WHEEL_DATA_PREFIX}/docs/differences-from-memory-lancedb-pro.md",
     f"{WHEEL_DATA_PREFIX}/docs/external-shared-memory.md",
     f"{WHEEL_DATA_PREFIX}/docs/stability.md",
+    f"{WHEEL_DATA_PREFIX}/docs/naming.md",
+    f"{WHEEL_DATA_PREFIX}/docs/hermes-upstream-recommendation-plan.md",
     f"{WHEEL_DATA_PREFIX}/scripts/import.openclaw.memory_lancedb_pro.py",
     f"{WHEEL_DATA_PREFIX}/scripts/nightly-digest.py",
     f"{WHEEL_DATA_PREFIX}/scripts/repair.vector_index.py",
+    f"{WHEEL_DATA_PREFIX}/scripts/report.hygiene.py",
     f"{WHEEL_DATA_PREFIX}/scripts/doctor.py",
 }
 STABLE_TOOL_NAMES = {
     "scope_recall_store",
+    "scope_recall_store_secret_index",
     "scope_recall_search",
     "scope_recall_context",
     "scope_recall_probe",
@@ -226,7 +236,11 @@ def cleanup_generated() -> None:
 def main() -> int:
     cleanup_generated()
     metadata = metadata_check()
-    for cmd in ([sys.executable, "-m", "pytest", "-q"], [sys.executable, "-m", "compileall", "-q", "."]):
+    for cmd in (
+        [sys.executable, "-m", "ruff", "check", "."],
+        [sys.executable, "-m", "pytest", "-q"],
+        [sys.executable, "-m", "compileall", "-q", "."],
+    ):
         fail_if_bad(run(cmd))
     wheel = wheel_check()
     cleanup_generated()

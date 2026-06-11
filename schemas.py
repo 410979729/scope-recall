@@ -47,6 +47,40 @@ SCOPE_RECALL_STORE_SCHEMA = {
     },
 }
 
+SCOPE_RECALL_STORE_SECRET_INDEX_SCHEMA = {
+    "name": "scope_recall_store_secret_index",
+    "description": (
+        "Store a searchable secret/credential index without storing plaintext secret material. "
+        "Put the actual password/token/key in an external vault/keyring and store only vault_ref plus safe metadata here."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "label": {"type": "string", "description": "Human-readable credential label or purpose."},
+            "secret_type": {
+                "type": "string",
+                "description": "Kind of secret being indexed.",
+                "enum": ["password", "token", "api_key", "private_key", "cookie", "credential", "other"],
+            },
+            "service": {"type": "string", "description": "Service, host, app, or integration this credential belongs to."},
+            "account": {"type": "string", "description": "Account or principal name, if safe to index."},
+            "username": {"type": "string", "description": "Username, if safe to index."},
+            "hostname": {"type": "string", "description": "Host or machine name, if relevant."},
+            "vault_ref": {"type": "string", "description": "External vault/keyring reference where the plaintext secret is stored."},
+            "secret_value": {
+                "type": "string",
+                "description": "Optional plaintext supplied only to compute a short fingerprint; it is never stored in SQL/FTS/vector.",
+            },
+            "notes": {"type": "string", "description": "Safe notes. Any secret-looking assignments are redacted before storage."},
+            "rotation_due": {"type": "string", "description": "Optional rotation/review date or cadence."},
+            "target": {"type": "string", "enum": ["memory", "project", "ops"], "description": "Durable target; defaults to ops."},
+            "entities": {"type": "array", "items": {"type": "string"}},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["label"],
+    },
+}
+
 SCOPE_RECALL_SEARCH_SCHEMA = {
     "name": "scope_recall_search",
     "description": "Search Scope Recall memories relevant to a query across the current local scope plus shared durable scope.",
@@ -156,7 +190,7 @@ SCOPE_RECALL_GOVERN_SCHEMA = {
 
 SCOPE_RECALL_REPAIR_SCHEMA = {
     "name": "scope_recall_repair",
-    "description": "Repair/rebuild the LanceDB vector companion from SQLite truth. Operator-only: requires maintenance_tools_enabled=true.",
+    "description": "Repair/rebuild the configured vector companion from SQLite truth. Operator-only: requires maintenance_tools_enabled=true.",
     "parameters": {"type": "object", "properties": {}},
 }
 

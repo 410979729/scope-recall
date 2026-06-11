@@ -15,9 +15,9 @@ It inherits the useful policy ideas from OpenClaw `memory-lancedb-pro`:
 But its implementation is intentionally split into two clear layers:
 
 1. **SQLite truth layer**
-2. **LanceDB vector companion layer**
+2. **Configured vector companion layer** (LanceDB by default, `sqlite-bruteforce` for native-free hosts)
 
-That split is deliberate. SQLite is the durable source of truth; LanceDB is the retrieval accelerator/semantic companion.
+That split is deliberate. SQLite is the durable source of truth; the configured vector backend is only the retrieval accelerator/semantic companion.
 
 ## Goals
 
@@ -35,7 +35,7 @@ V1 focuses on the local recall layer that every Hermes runtime can inspect and o
 
 - current-turn recall over the active query
 - SQLite truth storage for provider-owned memory records
-- LanceDB as a rebuildable semantic companion
+- a configured vector backend as a rebuildable semantic companion
 - durable scoped recall for `user`/`memory`/`project`/`ops` facts
 - local isolation for `general` scratch captures
 - conservative governance primitives such as dedupe, trust metadata, decay review, relations, and explicit operator tools
@@ -94,11 +94,12 @@ SQLite schema includes:
 
 An FTS5 side table provides fast lexical retrieval.
 
-### Layer C — LanceDB vector companion
+### Layer C — vector companion
 
-Stored in:
+Stored in one configured companion path:
 
-- `$HERMES_HOME/scope-recall/lancedb/`
+- `$HERMES_HOME/scope-recall/lancedb/` when `vector.backend=lancedb`
+- `$HERMES_HOME/scope-recall/vector.sqlite3` when `vector.backend=sqlite-bruteforce`
 
 Used for:
 
@@ -123,14 +124,14 @@ Used for:
 
 This borrows the useful graph/trust ideas from Hermes memory providers such as Hindsight, Holographic, Honcho, RetainDB, and Supermemory while keeping the implementation local and auditable. Entity rows and feedback rows are indexes over SQLite truth rows, not a separate authority.
 
-## Why SQLite truth + LanceDB companion
+## Why SQLite truth + rebuildable vector companion
 
 This architecture gives us:
 
 - stable local truth independent of vector backend changes
 - easier migrations and backups
 - reproducible lexical fallback
-- semantic search when available
+- semantic search when available through LanceDB or a native-free SQLite fallback
 - a cleaner open-source story than a provider whose name and reality drift apart
 
 ## Retrieval model
@@ -267,7 +268,7 @@ This keeps the boundary explicit: old OpenClaw LanceDB stores must be transforme
 
 ### Vector companion sync and repair
 
-The companion LanceDB layer syncs incrementally from SQLite truth on init by comparing stable ids and `updated_at` values:
+The configured vector companion layer syncs incrementally from SQLite truth on init by comparing stable ids and `updated_at` values:
 
 - missing vector rows are embedded and inserted
 - stale vector rows absent from SQLite are deleted
@@ -275,9 +276,9 @@ The companion LanceDB layer syncs incrementally from SQLite truth on init by com
 - unchanged rows are left alone
 - after sync, stats record physical row count, unique id count, and duplicate extra rows
 
-If LanceDB delete/upsert fails, SQLite remains authoritative and the provider marks vector state as `needs_repair`; the truth-row write is not reported as lost.
+If vector companion delete/upsert fails, SQLite remains authoritative and the provider marks vector state as `needs_repair`; the truth-row write is not reported as lost.
 
-Full rebuild is no longer the default init path. For deep maintenance or release-grade storage hygiene, run `scripts/repair.vector_index.py` to rebuild the LanceDB companion from SQLite truth with an automatic backup.
+Full rebuild is no longer the default init path. For deep maintenance or release-grade storage hygiene, run `scripts/repair.vector_index.py` to rebuild the configured vector companion from SQLite truth with an automatic backup.
 
 ### Nightly digest consolidation
 
@@ -290,7 +291,7 @@ The digest does not store raw `system` rows or raw `tool` output. Task-like sess
 - new durable fact/workflow/summary: insert
 - exact duplicate groups found after the run: delete duplicates through the same scoped delete path
 
-Actual writes use SQLite truth, FTS/entity sync, digest run/source ledger tables, and LanceDB upsert when the vector companion is enabled. Dry-run mode plans the same decisions without writing provider memory.
+Actual writes use SQLite truth, FTS/entity sync, digest run/source ledger tables, and configured vector upsert when the vector companion is enabled. Dry-run mode plans the same decisions without writing provider memory.
 
 ### Operational follow-up outside source readiness
 
@@ -343,7 +344,7 @@ What is already real now:
 
 - plugin source is packaged as an unpacked Hermes plugin under `$HERMES_HOME/plugins/scope-recall`
 - SQLite truth layer exists
-- LanceDB companion layer exists
+- configured vector companion layer exists
 - hybrid retrieval path exists
 - legacy local rename migration exists
 - focused tests for loading / hybrid recall / curated memory / stats pass

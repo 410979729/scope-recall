@@ -46,7 +46,7 @@ def test_openai_compatible_embedder_chunks_large_batches(monkeypatch):
         lambda self: fake_client,
     )
 
-    safe_placeholder_key = "public-test-key"
+    safe_placeholder_key = "pk-test"
     embedder = OpenAICompatibleEmbedder(
         model="gemini-embedding-001",
         api_key=safe_placeholder_key,
@@ -89,7 +89,7 @@ class _FakeHTTPResponse:
 def _make_minimax_embedder() -> MiniMaxEmbedder:
     return MiniMaxEmbedder(
         model="embo-01",
-        api_key="public-test-key",
+        api_key="pk-test",
         base_url="https://example.invalid",
     )
 
@@ -104,7 +104,7 @@ def test_build_embedder_routes_minimax_provider():
         {
             "provider": "minimax",
             "model": "embo-01",
-            "api_key": "public-test-key",
+            "api_key": "pk-test",
         }
     )
     assert isinstance(embedder, MiniMaxEmbedder)
@@ -114,7 +114,8 @@ def test_build_embedder_routes_minimax_provider():
     assert embedder.is_available() is True
     payload = embedder.describe()
     assert payload["base_url"].endswith("api.minimaxi.com")
-    assert payload["request_type"] == "db"
+    assert payload["document_type"] == "db"
+    assert payload["query_type"] == "query"
 
 
 def test_minimax_embedder_requires_api_key(monkeypatch):
@@ -158,11 +159,57 @@ def test_minimax_embedder_sends_expected_request(monkeypatch):
     request = captured[0]
     assert request["method"] == "POST"
     assert request["url"] == "https://example.invalid/v1/embeddings"
-    assert request["headers"]["Authorization"] == "Bearer public-test-key"
+    assert request["headers"]["Authorization"] == "Bearer pk-test"
     body = json.loads(request["body"])
     assert body["model"] == "embo-01"
     assert body["texts"] == ["alpha", "beta"]
     assert body["type"] == "db"
+
+
+def test_minimax_embedder_uses_query_type_for_search_queries(monkeypatch):
+    embedder = _make_minimax_embedder()
+    captured: list[dict] = []
+
+    def fake_urlopen(request, timeout):  # noqa: ARG001
+        captured.append(
+            {
+                "url": request.full_url,
+                "body": request.data.decode("utf-8") if request.data else "",
+            }
+        )
+        return _FakeHTTPResponse({"vectors": [[0.7, 0.8, 0.9]]})
+
+    monkeypatch.setattr("scope_recall.embedders.urllib.request.urlopen", fake_urlopen)
+
+    vector = embedder.embed_query("find this")
+
+    assert vector == [0.7, 0.8, 0.9]
+    assert captured[0]["url"] == "https://example.invalid/v1/embeddings"
+    body = json.loads(captured[0]["body"])
+    assert body["texts"] == ["find this"]
+    assert body["type"] == "query"
+
+
+def test_minimax_embedder_sends_optional_group_id_query_param(monkeypatch):
+    embedder = MiniMaxEmbedder(
+        model="embo-01",
+        api_key="pk-test",
+        base_url="https://example.invalid",
+        group_id="public-group-id",
+    )
+    captured_urls: list[str] = []
+
+    def fake_urlopen(request, timeout):  # noqa: ARG001
+        captured_urls.append(request.full_url)
+        return _FakeHTTPResponse({"vectors": [[0.1, 0.2, 0.3]]})
+
+    monkeypatch.setattr("scope_recall.embedders.urllib.request.urlopen", fake_urlopen)
+
+    embedder.embed_texts(["alpha"])
+
+    assert captured_urls == ["https://example.invalid/v1/embeddings?GroupId=public-group-id"]
+    payload = embedder.describe()
+    assert payload["group_id_configured"] is True
 
 
 def test_minimax_embedder_chunks_large_batches(monkeypatch):
@@ -193,7 +240,7 @@ def test_minimax_embedder_raises_on_http_error(monkeypatch):
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     embedder = MiniMaxEmbedder(
         model="embo-01",
-        api_key="public-test-key",
+        api_key="pk-test",
         base_url="https://example.invalid",
     )
     assert len(embedder._api_keys) == 1

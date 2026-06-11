@@ -1,8 +1,8 @@
 # Scope Recall V1 stability contract
 
-`scope-recall` 1.0.9 adds an optional `MiniMaxEmbedder` for the MiniMax `embo-01` embedding endpoint and otherwise remains the V1 compatibility line for the Hermes Scope Recall memory provider.
+`scope-recall` 1.0.11 adds an optional `MiniMaxEmbedder` for the MiniMax `embo-01` embedding endpoint and otherwise remains the V1 compatibility line for the Hermes Scope Recall memory provider.
 
-This document defines what V1 commits to keep stable, what may evolve in minor releases, and what remains explicitly outside the V1 compatibility promise.
+This document defines the stable V1 compatibility surface and the areas that may evolve in patch or minor releases.
 
 ## Stable V1 identity
 
@@ -33,9 +33,9 @@ Stable V1 guarantees:
 - provider-owned records are stored in `$HERMES_HOME/scope-recall/memory.sqlite3`
 - the `memories` table remains the authoritative source for stored Scope Recall rows
 - row ids are stable within the SQLite truth store
-- the LanceDB directory is a rebuildable companion index, not the source of truth
-- losing or rebuilding `$HERMES_HOME/scope-recall/lancedb/` must not delete SQLite truth rows
-- vector repair may rebuild LanceDB from SQLite truth
+- the configured vector companion is rebuildable companion state, not the source of truth
+- losing or rebuilding `$HERMES_HOME/scope-recall/lancedb/` or `$HERMES_HOME/scope-recall/vector.sqlite3` must not delete SQLite truth rows
+- vector repair may rebuild the configured companion from SQLite truth
 - nightly digest writes are still SQLite truth rows; the digest run/source ledger is audit metadata, not a separate memory authority
 
 Schema evolution policy:
@@ -57,6 +57,7 @@ V1 keeps these behavior boundaries stable:
 - maintenance tools (`scope_recall_dedupe`, `scope_recall_govern`, `scope_recall_hygiene`, and `scope_recall_repair`) are hidden and fail closed unless `maintenance_tools_enabled=true`
 - `scope_recall_hygiene` is read-only and never performs cleanup; operators must explicitly run a separate delete/merge/dedupe action after reviewing its output
 - `scope_recall_export` is available for scoped exports by default; `scope_only=false` requires `maintenance_tools_enabled=true`
+- `scope_recall_store_secret_index` may store searchable credential indexes, vault references, and non-reversible fingerprint prefixes, but plaintext secret values must not be stored in SQLite content, metadata, FTS, vector text, exports, logs, or chat replies
 - durable `user`/`memory`/`project`/`ops` rows are shared across windows/chats for the same platform + agent workspace + agent identity + user id
 - `general` scratch rows remain local to the current chat/thread or gateway session key
 - scoped tool actions operate on the current accessible scope set: local runtime scope plus shared durable scope
@@ -67,6 +68,7 @@ V1 keeps these behavior boundaries stable:
 The following tool names are stable for V1:
 
 - `scope_recall_store`
+- `scope_recall_store_secret_index`
 - `scope_recall_search`
 - `scope_recall_context`
 - `scope_recall_probe`
@@ -104,7 +106,7 @@ V1 supports these retrieval modes:
 - `vector`
 - `hybrid`
 
-The default config uses hybrid retrieval with SQLite lexical recall plus a LanceDB vector companion.
+The default config uses hybrid retrieval with SQLite lexical recall plus a LanceDB vector companion. Operators can set `vector.backend=sqlite-bruteforce` for a native-free/non-AVX companion.
 
 Embedder policy:
 
@@ -119,19 +121,13 @@ V1 includes two separate migration paths:
 1. legacy local `lancepro` storage migration on first initialization when applicable
 2. explicit OpenClaw `memory-lancedb-pro` import through `scripts/import.openclaw.memory_lancedb_pro.py`
 
-V1 does **not** promise direct reuse of old `.lance` tables as the new truth store. Old vector stores are import sources or companion-cache material, not drop-in Scope Recall storage.
+Old `.lance` tables enter V1 through import/cache paths: convert OpenClaw data into SQLite truth rows, then rebuild the configured vector companion from that truth store.
 
-## Explicit non-goals for V1
+## V1 compatibility scope
 
-V1 does not claim:
+The V1 compatibility promise is scoped to the local Hermes provider behavior described above: SQLite truth storage, configured vector companion retrieval, current-turn recall, scoped durable memory, local scratch isolation, explicit migration tools, and operator-visible diagnostics.
 
-- full OpenClaw `memory-lancedb-pro` parity
-- direct compatibility with old LanceDB-only truth stores
-- LLM-backed created/merged/skipped governance parity
-- perfect contradiction resolution
-- public cloud sync
-- multi-device replication
-- guaranteed high-quality semantic retrieval when only `local-hash` is available
+Compatibility with legacy OpenClaw or LanceDB-only data flows through the documented importer and migration paths. Hosted semantic quality depends on configured embedding providers; `local-hash` is an availability fallback for bootstrap and degraded offline use.
 
 ## Release gate expectations
 

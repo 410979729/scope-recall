@@ -136,6 +136,7 @@ def test_maintenance_tool_schemas_require_operator_config(provider):
     schemas = provider.get_tool_schemas()
     names = {schema["name"] for schema in schemas}
     assert {"scope_recall_context", "scope_recall_probe", "scope_recall_related", "scope_recall_feedback"} <= names
+    assert "scope_recall_store_secret_index" in names
     assert "scope_recall_dedupe" not in names
     assert "scope_recall_govern" not in names
     assert "scope_recall_repair" not in names
@@ -150,6 +151,97 @@ def test_maintenance_tool_schemas_require_operator_config(provider):
     assert "scope_recall_dedupe" in operator_names
     assert "scope_recall_govern" in operator_names
     assert "scope_recall_repair" in operator_names
+
+
+def test_tool_store_enriches_external_artifact_anchors(provider):
+    payload = json.loads(
+        provider.handle_tool_call(
+            "scope_recall_store",
+            {
+                "content": "Hermes 官方推荐申请见 https://github.com/NousResearch/hermes-agent/issues/42864，后续要查状态和评论。",
+                "target": "project",
+                "memory_type": "resource",
+            },
+        )
+    )
+    assert payload["stored"] is True
+
+    row = provider._require_conn().execute("SELECT content, metadata FROM memories WHERE id = ?", (payload["id"],)).fetchone()
+    assert row is not None
+    content = row["content"]
+    assert "Artifact anchors:" in content
+    assert "NousResearch/hermes-agent#42864" in content
+    assert "https://github.com/NousResearch/hermes-agent/issues/42864" in content
+    metadata = json.loads(row["metadata"])
+    assert metadata["artifacts"][0]["kind"] == "github_issue"
+    assert metadata["artifacts"][0]["repo"] == "NousResearch/hermes-agent"
+    assert metadata["artifacts"][0]["number"] == 42864
+
+    results = json.loads(provider.handle_tool_call("scope_recall_search", {"query": "#42864 hermes-agent 官方推荐", "limit": 3}))
+    assert any(item["id"] == payload["id"] for item in results["results"])
+
+
+def test_secret_index_tool_stores_vault_ref_without_plaintext_secret(provider):
+    secret_value = "correct-horse-battery-staple-12345"
+    payload = json.loads(
+        provider.handle_tool_call(
+            "scope_recall_store_secret_index",
+            {
+                "label": "LA proxy admin password",
+                "secret_type": "password",
+                "service": "la-proxy",
+                "account": "root",
+                "vault_ref": "vault://ops/la-proxy/root-password",
+                "secret_value": secret_value,
+                "notes": "用于服务器维护，回复时必须脱敏。",
+                "tags": ["ops", "credential"],
+            },
+        )
+    )
+    assert payload["stored"] is True
+    assert payload["secret_value_stored"] is False
+
+    row = provider._require_conn().execute("SELECT content, metadata FROM memories WHERE id = ?", (payload["id"],)).fetchone()
+    assert row is not None
+    assert secret_value not in row["content"]
+    assert "vault://ops/la-proxy/root-password" in row["content"]
+    assert "LA proxy admin password" in row["content"]
+    metadata = json.loads(row["metadata"])
+    assert metadata["sensitivity"] == "secret-index"
+    assert metadata["secret_storage"] == "external-vault-reference"
+    assert metadata["secret_value_stored"] is False
+    assert metadata["secret_value_sha256_prefix"]
+
+    exported = json.loads(provider.handle_tool_call("scope_recall_export", {"format": "json", "scope_only": True}))
+    assert secret_value not in json.dumps(exported, ensure_ascii=False)
+
+
+def test_secret_index_allows_credential_label_with_api_key_kind(provider):
+    secret_value = "scope-recall-smoke-secret-should-not-persist-12345"
+    payload = json.loads(
+        provider.handle_tool_call(
+            "scope_recall_store_secret_index",
+            {
+                "label": "Scope Recall smoke dummy credential",
+                "secret_type": "api_key",
+                "service": "scope-recall-smoke",
+                "account": "joy-smoke",
+                "vault_ref": "vault://smoke/scope-recall/dummy",
+                "secret_value": secret_value,
+                "notes": "dummy credential for pre-push smoke test; not real",
+                "tags": ["smoke", "credential"],
+            },
+        )
+    )
+    assert payload["stored"] is True
+    assert payload["secret_value_stored"] is False
+
+    row = provider._require_conn().execute("SELECT content, metadata FROM memories WHERE id = ?", (payload["id"],)).fetchone()
+    assert row is not None
+    assert "Kind: api_key" in row["content"]
+    assert secret_value not in row["content"]
+    exported = json.loads(provider.handle_tool_call("scope_recall_export", {"format": "json", "scope_only": True}))
+    assert secret_value not in json.dumps(exported, ensure_ascii=False)
 
 
 def test_scope_isolation_uses_user_and_profile(tmp_path):

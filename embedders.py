@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover - optional dependency
     SentenceTransformer = None
 
 import urllib.error
+import urllib.parse
 import urllib.request
 import json as _json_lib
 
@@ -158,6 +159,9 @@ class BaseEmbedder:
 
     def embed(self, text: str) -> list[float]:
         return self.embed_texts([text])[0]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed(text)
 
     def embed_texts(self, texts: Iterable[str]) -> list[list[float]]:
         raise NotImplementedError
@@ -362,9 +366,8 @@ class MiniMaxEmbedder(BaseEmbedder):
 
     The OpenAI SDK cannot talk to this shape (``input`` is singular, response
     uses ``data[].embedding``), so this class talks to the API directly with
-    ``urllib``.  An optional ``type`` field switches between ``db`` (bulk
-    indexing) and ``query`` (single search) request shapes — both return the
-    same ``vectors`` array.
+    ``urllib``. Document/indexing calls use ``db`` while vector-search query
+    calls use ``query``. Both request shapes return the same ``vectors`` array.
     """
 
     _DEFAULT_BASE_URL = "https://api.minimaxi.com"
@@ -378,7 +381,11 @@ class MiniMaxEmbedder(BaseEmbedder):
         api_key_env: Any = None,
         base_url: Any = None,
         base_url_env: Any = None,
-        request_type: str = "db",
+        request_type: str | None = None,
+        document_type: str = "db",
+        query_type: str = "query",
+        group_id: Any = None,
+        group_id_env: Any = None,
         timeout: float = 30.0,
         dimensions: int | None = None,
     ) -> None:
@@ -389,11 +396,16 @@ class MiniMaxEmbedder(BaseEmbedder):
             _resolve_optional_value(base_url, base_url_env)
             or self._DEFAULT_BASE_URL
         ).rstrip("/")
-        self._request_type = str(request_type or "db").strip().lower()
-        if self._request_type not in {"db", "query"}:
-            self._request_type = "db"
+        self._document_type = self._coerce_request_type(request_type or document_type, "db")
+        self._query_type = self._coerce_request_type(query_type, "query")
+        self._group_id = _resolve_optional_value(group_id, group_id_env)
         self._timeout = float(timeout)
         self._active_key_index = 0
+
+    @staticmethod
+    def _coerce_request_type(value: Any, default: str) -> str:
+        request_type = str(value or default).strip().lower()
+        return request_type if request_type in {"db", "query"} else default
 
     def is_available(self) -> bool:
         return bool(self._api_keys)
@@ -401,7 +413,10 @@ class MiniMaxEmbedder(BaseEmbedder):
     def describe(self) -> dict[str, Any]:
         payload = super().describe()
         payload["base_url"] = self._base_url
-        payload["request_type"] = self._request_type
+        payload["document_type"] = self._document_type
+        payload["query_type"] = self._query_type
+        if self._group_id:
+            payload["group_id_configured"] = True
         return payload
 
     def _rotate_key_after_failure(self) -> bool:
@@ -410,10 +425,12 @@ class MiniMaxEmbedder(BaseEmbedder):
         self._active_key_index = (self._active_key_index + 1) % len(self._api_keys)
         return True
 
-    def _post_embeddings(self, texts: list[str]) -> list[list[float]]:
+    def _post_embeddings(self, texts: list[str], *, request_type: str) -> list[list[float]]:
         url = f"{self._base_url}/v1/embeddings"
+        if self._group_id:
+            url = f"{url}?{urllib.parse.urlencode({'GroupId': self._group_id})}"
         body = _json_lib.dumps(
-            {"model": self.model, "texts": texts, "type": self._request_type}
+            {"model": self.model, "texts": texts, "type": request_type}
         ).encode("utf-8")
         last_error: Exception | None = None
         for _ in range(max(1, len(self._api_keys))):
@@ -459,10 +476,17 @@ class MiniMaxEmbedder(BaseEmbedder):
         batch_size = 64
         for start in range(0, len(items), batch_size):
             batch = items[start : start + batch_size]
-            vectors.extend(self._post_embeddings(batch))
+            vectors.extend(self._post_embeddings(batch, request_type=self._document_type))
         if vectors:
             self.info.dimensions = len(vectors[0])
         return vectors
+
+    def embed_query(self, text: str) -> list[float]:
+        item = clean_text(text) or " "
+        vectors = self._post_embeddings([item], request_type=self._query_type)
+        if vectors:
+            self.info.dimensions = len(vectors[0])
+        return vectors[0]
 
 
 def build_embedder(config: dict[str, Any]) -> BaseEmbedder:
@@ -502,7 +526,11 @@ def build_embedder(config: dict[str, Any]) -> BaseEmbedder:
             api_key_env=raw.get("api_key_env"),
             base_url=raw.get("base_url"),
             base_url_env=raw.get("base_url_env"),
-            request_type=str(raw.get("request_type") or "db"),
+            request_type=raw.get("request_type"),
+            document_type=str(raw.get("document_type") or raw.get("embed_type_db") or "db"),
+            query_type=str(raw.get("query_type") or raw.get("embed_type_query") or "query"),
+            group_id=raw.get("group_id"),
+            group_id_env=raw.get("group_id_env"),
             timeout=float(raw.get("timeout") or 30.0),
             dimensions=dimensions or None,
         )
